@@ -1,0 +1,13 @@
+# Render Blueprint: one Node web service that serves the game and the duel rooms.
+# Rooms live in memory, so keep this to a single instance.
+services:
+  - type: web
+    name: code-duel
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
