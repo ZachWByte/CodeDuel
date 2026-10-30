@@ -8,7 +8,7 @@ import { COUNTS } from './home.js';
 import { viewButton } from './view-settings.js';
 import { icon, brandMark, clockCase } from './icons.js';
 import { filterQuestions, LANG_LABELS, MODE_LABELS, DIFFICULTY_LABELS, CATEGORIES } from '../questions/index.js';
-import { ROUND_MINUTES, REVEAL_COSTS } from '../state/round.js';
+import { ROUND_MINUTES, REVEAL_COSTS, POWERUP_USES } from '../state/round.js';
 
 export const roomLink = (code) => `${location.origin}/?room=${code}`;
 const BOT_LEVELS = [['easy', 'Easy bot'], ['medium', 'Medium bot'], ['hard', 'Hard bot']];
@@ -229,6 +229,20 @@ export function renderLobby(root, { room: initial, chatEl = null, onConfig, onPi
       selectField('Reveal a failed test', REVEAL_COSTS.map((x) => [x, revealLabel(x)]), c.revealCost, (v) => set({ revealCost: Number(v) }),
         { ...opts, id: 'set-reveal', help: c.revealCost ? 'Shows a failed secret test’s call and answer, and lowers what the question can score.' : null }));
 
+    // Power-ups: the host gives everyone the same uses each round (0 = off).
+    const pu = { blackout: 0, wipe: 0, keyboard: 0, hints: 0, ...c.powerups };
+    const uses = (key, unit) => POWERUP_USES[key].map((n) => [n, n === 0 ? 'Off' : `${n} ${unit}${n === 1 ? '' : 's'} each`]);
+    const setPower = (key) => (v) => set({ powerups: { ...pu, [key]: Number(v) } });
+    const powers = h('div.settings-grid', {},
+      selectField('Blackout', uses('blackout', 'use'), pu.blackout, setPower('blackout'),
+        { ...opts, id: 'set-blackout', help: pu.blackout ? 'Turns every opponent’s editor off for 15 seconds. 3 minute cooldown.' : null }),
+      selectField('Wipe', uses('wipe', 'use'), pu.wipe, setPower('wipe'),
+        { ...opts, id: 'set-wipe', help: pu.wipe ? 'Deletes every opponent’s code on the question they have open.' : null }),
+      selectField('Mouse keys', uses('keyboard', 'use'), pu.keyboard, setPower('keyboard'),
+        { ...opts, id: 'set-keyboard', help: pu.keyboard ? 'Takes one opponent’s keyboard for 30 seconds: they type by clicking an on-screen one.' : null }),
+      selectField('Hints', uses('hints', 'hint'), pu.hints, setPower('hints'),
+        { ...opts, id: 'set-hints', help: pu.hints ? 'Pseudo-code or the first lines of a solution, for a question of yours.' : null }));
+
     let status;
     if (inRoom < 2) status = 'Waiting for someone to join…';
     else if (isHost) status = 'The round starts when everyone is ready, or when you press Start now.';
@@ -251,7 +265,8 @@ export function renderLobby(root, { room: initial, chatEl = null, onConfig, onPi
               h('button.icon-btn#btn-copy', { type: 'button', onclick: copyLink, title: 'Copy the invite link', 'aria-label': 'Copy the invite link' }, icon('copy'))),
             score ? h('p.match-score', {}, h('span.label', {}, 'Match'), h('strong', {}, score)) : null),
           pickSection(),
-          h('div.lobby-block', {}, h('h3.block-title', {}, 'Settings', isHost ? null : h('span.muted.small', {}, ' · set by the host')), settings)),
+          h('div.lobby-block', {}, h('h3.block-title', {}, 'Settings', isHost ? null : h('span.muted.small', {}, ' · set by the host')), settings),
+          h('div.lobby-block', {}, h('h3.block-title', {}, icon('bolt'), 'Power-ups', isHost ? null : h('span.muted.small', {}, ' · set by the host')), powers)),
 
         h('section.lobby-col', { 'aria-label': 'Players' },
           h('h2.col-title', {}, 'Players'),

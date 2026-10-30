@@ -2,17 +2,45 @@
 import { basicSetup } from 'codemirror';
 import { EditorView, Decoration, keymap } from '@codemirror/view';
 import { EditorState, Compartment, Prec } from '@codemirror/state';
-import { indentWithTab } from '@codemirror/commands';
+import { indentWithTab, insertNewlineAndIndent, deleteCharBackward, indentMore, cursorCharLeft, cursorCharRight, cursorLineUp, cursorLineDown } from '@codemirror/commands';
 import { indentUnit, HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { tags as t } from '@lezer/highlight';
-import { python } from '@codemirror/lang-python';
+import { python, pythonLanguage } from '@codemirror/lang-python';
+import { autocompletion, acceptCompletion, completeFromList, ifNotIn } from '@codemirror/autocomplete';
 import { getPrefs, onPrefs } from '../state/prefs.js';
 import { remoteCursors } from './collab.js';
 
 const bugLine = Decoration.line({ class: 'cm-bug-line' });
 
+// Source Academy built-ins (py-slang), suggested in Python §3 / §4 besides the
+// names in the code. Full Python gets Python's own built-ins from python().
+const SA_FUNCTIONS = [
+  'pair', 'head', 'tail', 'is_pair', 'is_none', 'set_head', 'set_tail',
+  'llist', 'is_llist', 'length', 'map', 'filter', 'reduce', 'append', 'reverse', 'member', 'remove', 'remove_all',
+  'enum_llist', 'build_llist', 'for_each', 'llist_ref', 'llist_to_string', 'print_llist',
+  'stream', 'stream_tail', 'is_stream', 'stream_map', 'stream_filter', 'stream_ref', 'stream_append', 'stream_length',
+  'stream_member', 'stream_remove', 'stream_remove_all', 'stream_reverse', 'stream_for_each', 'stream_to_llist',
+  'llist_to_stream', 'build_stream', 'enum_stream', 'eval_stream', 'integers_from',
+  'print', 'error', 'len', 'str', 'repr', 'abs', 'max', 'min', 'round', 'arity',
+  'is_number', 'is_integer', 'is_float', 'is_string', 'is_boolean', 'is_function', 'is_list',
+  'math_sqrt', 'math_floor', 'math_ceil', 'math_pow', 'math_log', 'math_log2', 'math_log10', 'math_exp',
+  'math_fabs', 'math_trunc', 'math_isqrt', 'math_gcd', 'math_lcm', 'math_factorial', 'math_comb', 'math_perm',
+  'math_sin', 'math_cos', 'math_tan', 'math_atan2', 'math_fmod', 'math_isnan', 'math_isinf', 'random_random',
+];
+const SA_EXTRA = { py4: ['parse', 'tokenize'] };
+const builtinsFor = (lang) => pythonLanguage.data.of({
+  autocomplete: ifNotIn(['String', 'FormatString', 'Comment'], completeFromList(
+    [...SA_FUNCTIONS, ...(SA_EXTRA[lang] ?? [])].map((label) => ({ label, type: 'function', boost: -1 })))),
+});
+
 // Every language in the game (Python §3, §4 and full Python) uses Python syntax.
-const languageFor = () => python();
+const languageFor = (lang) => (lang === 'python' ? python() : [python(), builtinsFor(lang)]);
+
+// On: suggestions as you type, and Tab takes the highlighted one (it indents when
+// none is open). Off: they only open on Ctrl + Space, and Tab always indents.
+const completing = (on) => (on
+  ? Prec.high(keymap.of([{ key: 'Tab', run: acceptCompletion }]))
+  : autocompletion({ activateOnTyping: false }));
 
 const wrapping = (on) => (on ? EditorView.lineWrapping : []);
 
@@ -48,9 +76,22 @@ const highlight = syntaxHighlighting(HighlightStyle.define([
   { tag: [t.self], color: 'var(--syn-keyword)' },
 ]));
 
+// Keys the on-screen keyboard can press besides characters (Mouse keys power-up).
+const KEY_COMMANDS = {
+  Enter: insertNewlineAndIndent,
+  Backspace: deleteCharBackward,
+  Tab: indentMore,
+  ArrowLeft: cursorCharLeft,
+  ArrowRight: cursorCharRight,
+  ArrowUp: cursorLineUp,
+  ArrowDown: cursorLineDown,
+};
+// Edits that come from the keyboard (or the clipboard), as CodeMirror labels them.
+const KEYBOARD_EVENTS = ['input', 'delete', 'undo', 'redo', 'move.drop'];
+
 /**
  * createEditor(parent, { doc, lang, onRun, onSubmit, onChange, onUpdate })
- *   -> { view, getCode, setCode, load, setLanguage, focus, destroy }
+ *   -> { view, getCode, setCode, load, replace, setLocked, setKeyboardLock, pressKey, setLanguage, focus, destroy }
  * onUpdate(update): every editor update (team editing listens for local changes).
  * load(key, doc): show another document (one per question), keeping each one's
  * undo history and cursor; `doc` is only used the first time a key is shown.
@@ -58,6 +99,22 @@ const highlight = syntaxHighlighting(HighlightStyle.define([
 export function createEditor(parent, { doc = '', lang = 'py3', onRun, onSubmit, onChange, onUpdate } = {}) {
   const language = new Compartment();
   const wrap = new Compartment();
+  const complete = new Compartment();
+  const lock = new Compartment();
+  const locking = (on) => (on ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : []);
+  let locked = false;
+
+  // Mouse keys: edits from the keyboard are dropped; only pressKey (the on-screen
+  // keyboard) may type. Moving the cursor, and teammates' edits, still work.
+  const keyLock = new Compartment();
+  let keyboardLocked = false;
+  let onScreen = false; // pressKey is typing
+  let onBlocked = null;
+  const keyLocking = (on) => (on ? EditorState.transactionFilter.of((tr) => {
+    if (!tr.docChanged || onScreen || !KEYBOARD_EVENTS.some((e) => tr.isUserEvent(e))) return tr;
+    queueMicrotask(() => onBlocked?.());
+    return [];
+  }) : []);
 
   const shortcuts = Prec.highest(keymap.of([
     { key: 'Mod-Enter', run: () => { onRun?.(); return true; } },
@@ -72,6 +129,9 @@ export function createEditor(parent, { doc = '', lang = 'py3', onRun, onSubmit, 
     EditorState.tabSize.of(4),
     language.of(languageFor(lang)),
     wrap.of(wrapping(getPrefs().wrap)),
+    complete.of(completing(getPrefs().autocomplete)),
+    lock.of(locking(false)),
+    keyLock.of(keyLocking(false)),
     theme,
     highlight,
     remoteCursors,
@@ -85,9 +145,11 @@ export function createEditor(parent, { doc = '', lang = 'py3', onRun, onSubmit, 
   const states = new Map(); // key -> EditorState of documents not on screen
   let key = null;
 
-  // Font size comes from a CSS variable; wrapping needs a reconfigure.
+  // Font size comes from a CSS variable; wrapping and autocomplete need a reconfigure.
+  const prefEffects = (p) => [wrap.reconfigure(wrapping(p.wrap)), complete.reconfigure(completing(p.autocomplete)),
+    lock.reconfigure(locking(locked)), keyLock.reconfigure(keyLocking(keyboardLocked))];
   const offPrefs = onPrefs((p) => {
-    view.dispatch({ effects: wrap.reconfigure(wrapping(p.wrap)) });
+    view.dispatch({ effects: prefEffects(p) });
     view.requestMeasure();
   });
 
@@ -101,7 +163,41 @@ export function createEditor(parent, { doc = '', lang = 'py3', onRun, onSubmit, 
       if (key !== null) states.set(key, view.state);
       key = next;
       view.setState((!fresh && states.get(next)) || makeState(text));
-      view.dispatch({ effects: wrap.reconfigure(wrapping(getPrefs().wrap)) });
+      view.dispatch({ effects: prefEffects(getPrefs()) });
+    },
+    /** Replaces a document's text with no undo back to what it was (a wipe). */
+    replace(k, text) {
+      if (k !== key) {
+        states.set(k, makeState(text));
+        return;
+      }
+      view.setState(makeState(text));
+      view.dispatch({ effects: prefEffects(getPrefs()) });
+    },
+    /** Locked: nobody can type (the document still takes changes from the code). */
+    setLocked(on) {
+      locked = on;
+      view.dispatch({ effects: lock.reconfigure(locking(on)) });
+      if (on) view.contentDOM.blur();
+    },
+    /** Mouse keys: the keyboard cannot edit; onBlockedKey() runs when it tries. */
+    setKeyboardLock(on, onBlockedKey = null) {
+      keyboardLocked = on;
+      onBlocked = onBlockedKey;
+      view.dispatch({ effects: keyLock.reconfigure(keyLocking(on)) });
+    },
+    /** Presses a key of the on-screen keyboard: a character, or a KEY_COMMANDS name. */
+    pressKey(key) {
+      if (locked) return;
+      onScreen = true;
+      try {
+        const command = KEY_COMMANDS[key];
+        if (command) command(view);
+        else view.dispatch({ ...view.state.replaceSelection(key), scrollIntoView: true, userEvent: 'input.type' });
+      } finally {
+        onScreen = false;
+      }
+      if (!view.hasFocus) view.focus();
     },
     /** The code of a document, on screen or not (undefined if it was never shown). */
     codeOf: (k) => (k === key ? view.state.doc.toString() : states.get(k)?.doc.toString()),

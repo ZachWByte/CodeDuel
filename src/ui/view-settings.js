@@ -1,4 +1,4 @@
-// The View panel (editor side, zoom, font size, wrapping), its keyboard
+// The View panel (editor side, zoom, font size, wrapping, autocomplete), its keyboard
 // shortcuts, and the draggable divider between the problem and the editor.
 import { h, setChildren, segmented, toast } from './dom.js';
 import { getPrefs, setPrefs, stepPref, onPrefs, LIMITS, DEFAULT_PREFS } from '../state/prefs.js';
@@ -29,13 +29,16 @@ function drawPanel() {
         { atMin: p.editorFont <= editorFont.min, atMax: p.editorFont >= editorFont.max, unit: 'px' })),
     h('div.view-row', {}, h('label', { for: 'pref-wrap' }, 'Wrap long lines'),
       h('input#pref-wrap', { type: 'checkbox', checked: p.wrap, onchange: (e) => setPrefs({ wrap: e.target.checked }) })),
+    h('div.view-row', {}, h('label', { for: 'pref-complete', title: 'Suggest names as you type; Tab or Enter picks the highlighted one' }, 'Autocomplete'),
+      h('input#pref-complete', { type: 'checkbox', checked: p.autocomplete, onchange: (e) => setPrefs({ autocomplete: e.target.checked }) })),
     h('div.view-row', {}, h('span', {}, 'Problem panel'),
       h('button.btn.btn-small', {
         type: 'button',
         disabled: p.problemWidth === DEFAULT_PREFS.problemWidth,
         onclick: () => setPrefs({ problemWidth: DEFAULT_PREFS.problemWidth }),
       }, 'Reset width')),
-    h('p.muted.small.view-help', {}, 'Drag the bar between the problem and the editor to resize. ',
+    h('p.muted.small.view-help', {}, p.autocomplete ? ['Suggestions appear as you type: ', h('kbd', {}, 'Tab'), ' or ', h('kbd', {}, 'Enter'), ' picks one, ', h('kbd', {}, 'Esc'), ' hides them. '] : null,
+      'Drag the bar between the problem and the editor to resize. ',
       h('kbd', {}, 'Alt + ='), ' / ', h('kbd', {}, 'Alt + −'), ' zoom, ', h('kbd', {}, 'Alt + 0'), ' reset.'),
     h('div.view-foot', {},
       h('button.btn.btn-small', { type: 'button', onclick: () => setPrefs({ ...DEFAULT_PREFS }) }, 'Reset all')));

@@ -6,7 +6,7 @@ import { io as connect } from 'socket.io-client';
 import { attachDuel, validConfig, validPick, audioType } from '../server/duel.js';
 import { createSolutionStore } from '../server/solutions.js';
 import { getQuestion } from '../src/questions/index.js';
-import { resolveTests } from '../src/judge/resolve.js';
+import { resolveTests, startingCode } from '../src/judge/resolve.js';
 
 const config = { lang: 'py3', difficulty: 'easy', count: 1 };
 const raceLists = { mode: 'code-race', category: 'lists' };
@@ -89,7 +89,8 @@ async function startRound(a, b, pick = raceLists) {
 }
 
 test('settings and picks are validated', () => {
-  const full = { ...config, minutes: 15, partial: false, revealCost: 0 };
+  const off = { blackout: 0, wipe: 0, keyboard: 0, hints: 0 };
+  const full = { ...config, minutes: 15, partial: false, revealCost: 0, powerups: off };
   assert.deepEqual(validConfig({ ...config, mode: 'x' }), full, 'round options take their defaults');
   assert.deepEqual(validConfig({ ...config, minutes: 20, partial: true, revealCost: 0.25 }), { ...full, minutes: 20, partial: true, revealCost: 0.25 });
   assert.equal(validConfig({ ...config, minutes: 7 }), null);
@@ -99,6 +100,9 @@ test('settings and picks are validated', () => {
   assert.equal(validConfig(null), null);
   assert.deepEqual(validPick({ mode: 'random', category: 'dp' }), { mode: 'random', category: 'dp' });
   assert.equal(validPick({ mode: 'bug-hunt', category: 'constructor' }), null);
+  assert.deepEqual(validConfig({ ...config, powerups: { blackout: 2, wipe: 2 } }).powerups, { blackout: 2, wipe: 2, keyboard: 0, hints: 0 });
+  assert.equal(validConfig({ ...config, powerups: { blackout: 5 } }), null);
+  assert.equal(validConfig({ ...config, powerups: { wipe: 3 } }), null);
 });
 
 test('a round starts when both have voted and are ready, and the loser picks next', async () => {
@@ -204,6 +208,158 @@ test('a duel solve is saved with its code', async () => {
     assert.equal(saved.room, code);
     assert.equal(saved.code, getQuestion(qid).solution.sicpy);
     assert.ok(saved.points > 0);
+  } finally {
+    await close();
+  }
+});
+
+const withPowers = { ...config, count: 3, powerups: { blackout: 2, wipe: 2, keyboard: 1, hints: 2 } };
+
+/** Ada, Bob and Cy (each on their own) in a round with power-ups on. */
+async function powerRound(client) {
+  const a = client();
+  const b = client();
+  const c = client();
+  await a.until((r) => r === null);
+  const { code } = await a.request('duel:create', { name: 'Ada', config: withPowers });
+  await b.request('duel:join', { code, name: 'Bob' });
+  await c.request('duel:join', { code, name: 'Cy' });
+  await a.until((r) => r?.players.length === 3);
+  for (const x of [a, b, c]) await x.request('duel:pick', raceLists);
+  for (const x of [a, b, c]) await x.request('duel:ready', { ready: true });
+  const ra = await a.until((r) => r.status === 'playing');
+  await b.until((r) => r.status === 'playing');
+  await c.until((r) => r.status === 'playing');
+  return { a, b, c, ra };
+}
+
+test('blackout hits every opponent for 15 seconds, then a cooldown; their submits wait for it', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b, c, ra } = await powerRound(client);
+    assert.deepEqual(ra.powers, { blackout: 2, wipe: 2, keyboard: 1, hints: 2, blackoutReadyAt: 0 });
+    assert.ok((await a.request('duel:power', { type: 'blackout' })).ok);
+    for (const x of [b, c]) {
+      const seen = await x.until((r) => me(r).blackedUntil);
+      const left = me(seen).blackedUntil - Date.now();
+      assert.ok(left > 12_000 && left <= 15_000, `about 15 s (${left})`);
+      assert.equal(me(seen).blackedBy, 'Ada');
+    }
+    const after = await a.until((r) => r.powers.blackout === 1);
+    assert.equal(me(after).blackedUntil, null, 'not yourself');
+    assert.ok(after.powers.blackoutReadyAt - Date.now() > 170_000, 'three minutes before the next one');
+    assert.match((await a.request('duel:power', { type: 'blackout' })).error, /cooling down/);
+    assert.ok(b.chat.some((m) => m.text.includes('Ada blacked out everyone (Bob, Cy)')));
+
+    // Bob's submit while blacked out is held back (not applied yet).
+    const qid = firstQ(ra);
+    b.socket.emit('duel:action', { type: 'submitResult', result: solve(qid), seq: 1 });
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(qOf(b.room, qid).status, 'open');
+  } finally {
+    await close();
+  }
+});
+
+test('wipe: every opponent’s open question goes back to its starting code, except solved ones', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b, c, ra } = await powerRound(client);
+    const wiped = { b: [], c: [], a: [] };
+    b.socket.on('duel:wipe', (w) => wiped.b.push(w));
+    c.socket.on('duel:wipe', (w) => wiped.c.push(w));
+    a.socket.on('duel:wipe', (w) => wiped.a.push(w));
+    const qid = firstQ(ra);
+    assert.ok((await a.request('duel:power', { type: 'wipe' })).ok);
+    await waitFor(() => wiped.b.length === 1 && wiped.c.length === 1);
+    assert.equal(wiped.a.length, 0, 'not yourself');
+    assert.equal(wiped.b[0].questionId, qid);
+    assert.equal(wiped.b[0].by, 'Ada');
+    assert.equal(wiped.b[0].code, startingCode(getQuestion(qid), 'py3'));
+
+    // Bob solves the question he has open: the next wipe only hits Cy.
+    b.socket.emit('duel:action', { type: 'submitResult', result: solve(qid), seq: 1 });
+    await b.until((r) => qOf(r, qid).status === 'solved');
+    assert.ok((await a.request('duel:power', { type: 'wipe' })).ok);
+    await waitFor(() => wiped.c.length === 2);
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(wiped.b.length, 1);
+    assert.match((await a.request('duel:power', { type: 'wipe' })).error, /no wipes left/);
+  } finally {
+    await close();
+  }
+});
+
+test('mouse keys: one opponent you pick types on an on-screen keyboard for 30 seconds', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b, c, ra } = await powerRound(client);
+    const bobId = named(ra, 'Bob').id;
+    assert.match((await a.request('duel:power', { type: 'keyboard', targetId: me(ra).id })).error, /Pick an opponent/);
+    assert.match((await a.request('duel:power', { type: 'keyboard' })).error, /Pick an opponent/);
+    assert.ok((await a.request('duel:power', { type: 'keyboard', targetId: bobId })).ok);
+    const seen = await b.until((r) => me(r).keyboardUntil);
+    const left = me(seen).keyboardUntil - Date.now();
+    assert.ok(left > 27_000 && left <= 30_000, `about 30 s (${left})`);
+    assert.equal(me(seen).keyboardBy, 'Ada');
+    assert.equal(me(c.room).keyboardUntil, null, 'only Bob');
+    assert.equal((await a.until((r) => r.powers.keyboard === 0)).powers.keyboard, 0);
+    assert.match((await a.request('duel:power', { type: 'keyboard', targetId: bobId })).error, /no Mouse keys left/);
+    assert.ok(b.chat.some((m) => m.text.includes("Ada took Bob's keyboard")));
+  } finally {
+    await close();
+  }
+});
+
+test('hints: pseudo-code or lines of a solution, for your side only', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b, ra } = await powerRound(client);
+    const qid = firstQ(ra);
+    const one = await a.request('duel:hint', { questionId: qid, kind: 'outline' });
+    assert.ok(one.ok);
+    assert.match(one.hint.outline, /^def /);
+    assert.ok(one.hint.outline.includes('…'));
+    assert.match((await a.request('duel:hint', { questionId: qid, kind: 'outline' })).error, /already have/, 'not charged twice');
+    const two = await a.request('duel:hint', { questionId: qid, kind: 'lines' });
+    assert.equal(two.hint.lines, getQuestion(qid).solution.sicpy.split('\n').slice(0, 3).join('\n'));
+    assert.match((await a.request('duel:hint', { questionId: qid, kind: 'lines' })).error, /no hints left/);
+    const seenA = await a.until((r) => r.hints[qid]?.lines);
+    assert.equal(seenA.powers.hints, 0);
+    assert.deepEqual(b.room.hints, {}, 'Bob does not see Ada’s hints');
+  } finally {
+    await close();
+  }
+});
+
+test('a team is wiped through its shared document', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b, ra, bobId } = await (async () => {
+      const x = client();
+      const y = client();
+      const z = client();
+      await x.until((r) => r === null);
+      const { code } = await x.request('duel:create', { name: 'Ada', config: withPowers });
+      await y.request('duel:join', { code, name: 'Bob' });
+      await z.request('duel:join', { code, name: 'Cy' });
+      await y.request('duel:team', { team: 'red' });
+      await z.request('duel:team', { team: 'red' });
+      for (const c of [x, y, z]) await c.request('duel:pick', raceLists);
+      for (const c of [x, y, z]) await c.request('duel:ready', { ready: true });
+      const r = await x.until((s) => s.status === 'playing');
+      return { a: x, b: y, ra: r, bobId: named(r, 'Bob').id };
+    })();
+    const qid = firstQ(ra);
+    const opened = await b.request('team:open', { questionId: qid });
+    await b.request('team:push', { questionId: qid, version: opened.version, updates: [{ clientID: 'b', changes: [opened.doc.length, [0, '# mine\n']] }] });
+    const updates = [];
+    b.socket.on('team:updates', (u) => updates.push(u));
+    assert.ok((await a.request('duel:power', { type: 'wipe' })).ok);
+    await waitFor(() => updates.some((u) => u.updates.some((x) => x.clientID === 'wipe')));
+    const again = await b.request('team:open', { questionId: qid });
+    assert.equal(again.doc, startingCode(getQuestion(qid), 'py3'));
+    assert.ok(a.chat.some((m) => m.text.includes("Ada wiped everyone's code (Bob, Cy)")));
   } finally {
     await close();
   }
@@ -685,7 +841,7 @@ test('the host\'s round options reach everyone; reveals only when allowed and on
     assert.ok((await b.request('duel:config', { config: { ...config, minutes: 5 } })).error, 'only the host');
     assert.ok((await a.request('duel:config', { config: { ...config, minutes: 20, partial: true, revealCost: 0.25 } })).ok);
     const seen = await b.until((r) => r.config.minutes === 20);
-    assert.deepEqual(seen.config, { ...config, minutes: 20, partial: true, revealCost: 0.25 });
+    assert.deepEqual(seen.config, { ...config, minutes: 20, partial: true, revealCost: 0.25, powerups: { blackout: 0, wipe: 0, keyboard: 0, hints: 0 } });
 
     const room = await startRound(a, b);
     const qid = firstQ(room);

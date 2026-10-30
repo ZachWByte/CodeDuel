@@ -15,6 +15,7 @@ import { BASE_POINTS, PENALTIES, FREE_TEST_RUNS } from '../state/engine.js';
 import { loadDraft, saveDraft, clearDraft } from '../state/storage.js';
 import { icon, brandMark, clockCase } from './icons.js';
 import { markEl } from './annotate.js';
+import { createScreenKeyboard } from './screen-keyboard.js';
 import { problemView, outputView, resultsView, breakdownRows, watchEngine } from './play-parts.js';
 
 const DRAFT_EVERY_MS = 3000;
@@ -23,15 +24,19 @@ const CODE_EVERY_MS = 1000; // code for spectators (players on their own; teams 
 const CURSOR_EVERY_MS = 250; // your cursor, for teammates
 
 /**
- * renderRound(root, { store, resumed, headerExtra?, watch?, team?, onView, onCode, onProgress, onFinished, onQuit })
- *   -> { cleanup(), refresh() }
+ * renderRound(root, { store, resumed, headerExtra?, watch?, team?, hintsFor?, onView, onCode, onProgress, onFinished, onQuit })
+ *   -> { cleanup(), refresh(), refreshHints(), setBlackout(until, by), setMouseKeys(until, by), wipe(questionId, code), questionId() }
  * store: { getState(), dispatch(action), subscribe(fn) } over a round state (src/state/round.js)
  * watch: { el, button }: the spectator view, and the header button that shows it
  * team: null, or the team editor's network: { open(qid), push(qid, msg), pull(qid, version),
  *   onUpdates(fn), sendCursor(qid, pos), onCursor(fn), matesOn(qid) -> names, mates() -> names }
+ * hintsFor(questionId): the hints your side has on a question ({ outline?, lines? }), or null
  * refresh(): teammates moved (the tabs show who is where)
+ * setBlackout(until, by): an opponent blacked out your editor until `until` (our clock)
+ * setMouseKeys(until, by): an opponent took your keyboard: type with the on-screen one until `until`
+ * wipe(questionId, code): an opponent wiped your code on a question
  */
-export function renderRound(root, { store, resumed, headerExtra = null, watch = null, team = null,
+export function renderRound(root, { store, resumed, headerExtra = null, watch = null, team = null, hintsFor = null,
   onView, onCode, onProgress, onFinished, onQuit }) {
   const { lang, mode, difficulty } = store.getState().config;
   const fam = LANG_FAMILY[lang];
@@ -67,6 +72,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
     console: null,
     watchPane: h('div.watch-pane', { hidden: true }),
     worth: h('p.worth', {}),
+    blackout: h('div.blackout', { hidden: true, role: 'alert' }),
   };
   const btn = {
     run: h('button.btn#btn-run', { title: 'Run (Ctrl/⌘ + Enter)', onclick: () => doRun() }, icon('play'), 'Run'),
@@ -118,7 +124,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
   el.main.append(
     h('section.panel.problem', {}, el.endCard, el.problem),
     splitter(el.main),
-    h('section.panel.work', {}, el.teamStrip, el.editorHost, el.toolbar, el.console, el.watchPane));
+    h('section.panel.work', {}, el.teamStrip, el.editorHost, el.toolbar, el.console, el.watchPane, el.blackout));
   showTab('output');
 
   // ---------------------------------------------------------------- the editor (and the team's shared one)
@@ -326,9 +332,94 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
       }))];
   }
 
+  /** Hints your side bought for this question (the Hint power-up). */
+  let hintsShown = '';
+  function hintList() {
+    const hint = hintsFor?.(q.id);
+    hintsShown = JSON.stringify(hint ?? null);
+    if (!hint?.outline && !hint?.lines) return null;
+    const bug = q.mode === 'bug-hunt';
+    return h('div.hints', {},
+      h('h3.section-title', {}, icon('bulb'), 'Hints'),
+      hint.outline ? [h('p.hint-label', {}, bug ? 'Where the bug is' : 'Pseudo-code'),
+        bug ? h('p.hint-text', {}, hint.outline) : h('pre.hint-code', {}, hint.outline)] : null,
+      hint.lines ? [h('p.hint-label', {}, bug ? 'The fix' : `A solution, first ${hint.linesShown} line${hint.linesShown === 1 ? '' : 's'}${hint.more ? '' : ' (all of it)'}`),
+        h('pre.hint-code', {}, hint.lines)] : null);
+  }
+
   function drawProblem() {
-    setChildren(el.problem, ...problemView(q, lang, { extra: el.worth }), revealedList(), scoringNote(stateQ()));
+    setChildren(el.problem, ...problemView(q, lang, { extra: el.worth }), hintList(), revealedList(), scoringNote(stateQ()));
     updateWorth();
+  }
+
+  // ---------------------------------------------------------------- blackout (a power-up used on you)
+  let blackedUntil = 0;
+  let blackoutTimer = 0;
+  const blackedOut = () => Date.now() < blackedUntil;
+  function setBlackout(until, by) {
+    if (!until || until <= Date.now()) {
+      if (blackedUntil && !blackedOut()) endBlackout();
+      return;
+    }
+    if (until === blackedUntil) return;
+    blackedUntil = until;
+    const left = h('span.numeral.blackout-time', {});
+    setChildren(el.blackout, h('div.blackout-box', {},
+      h('div.blackout-icon', {}, icon('moon')),
+      h('strong', {}, 'Blacked out'),
+      h('span', {}, by ? `${by} turned your editor off.` : 'An opponent turned your editor off.'),
+      left));
+    el.blackout.hidden = false;
+    editor.setLocked(true);
+    updateButtons();
+    const tick = () => {
+      const s = Math.ceil((blackedUntil - Date.now()) / 1000);
+      if (s <= 0) endBlackout();
+      else left.textContent = formatTime(s);
+    };
+    clearInterval(blackoutTimer);
+    blackoutTimer = setInterval(tick, 250);
+    tick();
+  }
+  // ---------------------------------------------------------------- mouse keys (a power-up used on you)
+  let keysUntil = 0;
+  let keysTimer = 0;
+  const screenKeys = createScreenKeyboard({ onKey: (key) => { if (q && !watching) editor.pressKey(key); } });
+  screenKeys.el.hidden = true;
+  el.console.append(screenKeys.el);
+  function setMouseKeys(until, by) {
+    if (!until || until <= Date.now()) {
+      if (keysUntil && Date.now() >= keysUntil) endMouseKeys();
+      return;
+    }
+    if (until === keysUntil) return;
+    keysUntil = until;
+    screenKeys.setTitle(by ? `${by} took your keyboard` : 'An opponent took your keyboard');
+    screenKeys.el.hidden = false;
+    editor.setKeyboardLock(true, () => screenKeys.nudge());
+    const tick = () => {
+      const left = Math.ceil((keysUntil - Date.now()) / 1000);
+      if (left <= 0) endMouseKeys();
+      else screenKeys.setTime(formatTime(left));
+    };
+    clearInterval(keysTimer);
+    keysTimer = setInterval(tick, 250);
+    tick();
+  }
+  function endMouseKeys() {
+    clearInterval(keysTimer);
+    keysUntil = 0;
+    screenKeys.el.hidden = true;
+    editor.setKeyboardLock(false);
+  }
+
+  function endBlackout() {
+    clearInterval(blackoutTimer);
+    blackedUntil = 0;
+    el.blackout.hidden = true;
+    editor.setLocked(false);
+    updateButtons();
+    if (alive && !watching) editor.focus();
   }
 
   function drawEnd() {
@@ -417,10 +508,11 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
 
   function updateButtons() {
     const open = isOpen();
-    btn.run.disabled = busy;
-    btn.tests.disabled = busy;
-    btn.submit.disabled = busy || !open;
-    btn.reset.disabled = busy;
+    const dark = blackedOut();
+    btn.run.disabled = busy || dark;
+    btn.tests.disabled = busy || dark;
+    btn.submit.disabled = busy || !open || dark;
+    btn.reset.disabled = busy || dark;
     btn.finish.disabled = busy || store.getState().status !== 'playing';
     setChildren(el.status, busy ? h('span.spinner', { 'aria-label': 'Running' }) : '', busy ? ' Running…' : '');
   }
@@ -440,7 +532,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
   if (watch?.button) watch.button.onclick = () => setWatching(!watching);
 
   async function withBusy(fn) {
-    if (busy) return;
+    if (busy || blackedOut()) return;
     busy = true;
     updateButtons();
     try {
@@ -545,6 +637,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
   }
 
   async function doReset() {
+    if (blackedOut()) return;
     const what = q.mode === 'bug-hunt' ? 'the original buggy code' : 'the starter code';
     const whose = team ? ' This changes it for your whole team.' : ' Your changes will be lost.';
     if (await confirmDialog(`Reset this question to ${what}?${whose}`, { ok: 'Reset', danger: true })) {
@@ -634,8 +727,27 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
       drawTabs();
       drawTeamStrip();
     },
+    /** Hints may have changed (redraws the problem only if they did). */
+    refreshHints() {
+      if (alive && q && JSON.stringify(hintsFor?.(q.id) ?? null) !== hintsShown) drawProblem();
+    },
+    setBlackout: (until, by) => { if (alive) setBlackout(until, by); },
+    setMouseKeys: (until, by) => { if (alive) setMouseKeys(until, by); },
+    /** A wipe on a question (players on their own; a team's arrives through its document). */
+    wipe(questionId, code) {
+      if (!alive || team) return;
+      editor.replace(questionId, code);
+      saveDraft(questionId, lang, code);
+      if (q?.id === questionId) {
+        lastSavedCode = code;
+        updateMeter();
+      }
+    },
+    questionId: () => q?.id ?? null,
     cleanup() {
       alive = false;
+      clearInterval(blackoutTimer);
+      clearInterval(keysTimer);
       closePanel();
       cancelAnimationFrame(meterFrame);
       saveDraftNow();

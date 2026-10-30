@@ -6,13 +6,14 @@ import { renderLobby } from './ui/lobby.js';
 import { renderDuelResults } from './ui/duel-results.js';
 import { createChatDock } from './ui/chat.js';
 import { createSpectator } from './ui/spectate.js';
+import { createPowerups } from './ui/powerups.js';
 import { createLeaderboard, standingText, standings, mySide, titleOf } from './ui/leaderboard.js';
 import { icon } from './ui/icons.js';
 import { displayName } from './ui/lobby.js';
 import { MODE_LABELS, CATEGORIES } from './questions/index.js';
 import { reduceRound } from './state/round.js';
 import {
-  request, send, onRoom, onChat, onVerify, onWatch, onTeamUpdates, onTeamCursor, onConnection, markInDuel, wasInDuel,
+  request, send, on, onRoom, onChat, onVerify, onWatch, onTeamUpdates, onTeamCursor, onConnection, markInDuel, wasInDuel,
 } from './net/duel-client.js';
 import { warmUp } from './runners/runner.js';
 
@@ -106,6 +107,11 @@ export function createDuel({ root, mount, showHome }) {
     onChat((msg) => { if (engaged) chat.add(msg); }, (log) => { if (engaged) chat.setLog(log); });
     onVerify(({ message }) => { if (engaged) toast(message, 7000, 'bad'); });
     onWatch(receiveWatch);
+    on('duel:wipe', ({ questionId, code, by }) => {
+      if (!engaged || screen?.kind !== 'game') return;
+      screen.wipe?.(questionId, code);
+      toast(`🧨 ${by} wiped your code on ${titleOf(questionId)}`, 5000, 'bad');
+    });
     onConnection((status) => {
       if (status === 'replaced' && engaged) {
         goHome('This duel was opened in another tab, so it closed here.');
@@ -153,7 +159,12 @@ export function createDuel({ root, mount, showHome }) {
     resuming = false;
     const delta = Date.now() - snap.serverNow;
     if (room && snap.round !== room.round) watches.clear();
-    room = { ...snap, players: snap.players.map((p) => ({ ...p, state: rebase(p.state, delta) })) };
+    const at = (t) => (t ? t + delta : t);
+    room = {
+      ...snap,
+      powers: snap.powers ? { ...snap.powers, blackoutReadyAt: at(snap.powers.blackoutReadyAt) } : null,
+      players: snap.players.map((p) => ({ ...p, state: rebase(p.state, delta), blackedUntil: at(p.blackedUntil), keyboardUntil: at(p.keyboardUntil) })),
+    };
     markInDuel(true);
     chat.setYou(room.youId);
     chat.setTeam(room.players.find((p) => p.id === room.youId)?.team ?? null);
@@ -183,7 +194,7 @@ export function createDuel({ root, mount, showHome }) {
     }
     mount(() => {
       const view = kind === 'lobby' ? lobbyScreen() : kind === 'game' ? gameScreen(restore) : resultsScreen();
-      screen = { kind, round: room.round, update: view.update, watch: view.watch };
+      screen = { kind, round: room.round, update: view.update, watch: view.watch, wipe: view.wipe };
       return view.cleanup;
     });
   }
@@ -272,12 +283,20 @@ export function createDuel({ root, mount, showHome }) {
 
     const seen = new Map(standings(room).map((s) => [s.key, sideSummary(s)]));
     const countdown = countdownOverlay(self.state.startedAt);
-    const view = renderRound(root, {
+    let view = null;
+    const powerups = createPowerups({
+      onPower: (type, targetId) => request('duel:power', { type, targetId }),
+      onHint: (questionId, kind) => request('duel:hint', { questionId, kind }),
+      questionId: () => view?.questionId() ?? null,
+    });
+    powerups.update(room);
+    view = renderRound(root, {
       store,
       resumed: restore,
-      headerExtra: h('div.hdr-duel', {}, standing, watchBtn, chat.toggle),
+      headerExtra: h('div.hdr-duel', {}, standing, powerups.button, watchBtn, chat.toggle),
       watch: { el: spectator.el, button: watchBtn },
       team,
+      hintsFor: (questionId) => room.hints?.[questionId] ?? null,
       onView: (questionId) => send('duel:view', { questionId }),
       onProgress: (questionId, lines) => send('duel:progress', { questionId, lines }),
       onCode: (questionId, code) => send('duel:code', { questionId, code }),
@@ -290,14 +309,23 @@ export function createDuel({ root, mount, showHome }) {
       },
     });
 
+    const drawBlackout = () => {
+      const mine = room.players.find((p) => p.id === room.youId);
+      view.setBlackout(mine?.blackedUntil ?? null, mine?.blackedBy ?? null);
+      view.setMouseKeys(mine?.keyboardUntil ?? null, mine?.keyboardBy ?? null);
+    };
+    drawBlackout();
+
     return {
       cleanup() {
         countdown.remove();
         chat.setTop(null);
         spectator.destroy();
+        powerups.destroy();
         view.cleanup();
       },
       watch: drawWatch,
+      wipe: (questionId, code) => view.wipe(questionId, code),
       update(next) {
         const mine = next.players.find((p) => p.id === next.youId);
         store.receive(mine.state, next.yourSeq);
@@ -310,6 +338,9 @@ export function createDuel({ root, mount, showHome }) {
         drawStanding();
         drawWatch();
         view.refresh();
+        powerups.update(next);
+        view.refreshHints();
+        drawBlackout();
       },
     };
   }

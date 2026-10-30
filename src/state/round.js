@@ -14,6 +14,9 @@ import { BASE_POINTS, PENALTIES, FREE_TEST_RUNS } from './engine.js';
 export const ROUND_MINUTES = [5, 10, 15, 20, 30, 45, 60];
 export const REVEAL_COSTS = [0, 0.1, 0.25, 0.5];
 export const DEFAULT_ROUND = { minutes: 15, partial: false, revealCost: 0 };
+// Duel power-ups: uses per player per round the host may give (0 = off). See server/duel.js.
+// Blackout and wipe hit every opponent at once, so they come in small numbers.
+export const POWERUP_USES = { blackout: [0, 1, 2, 3], wipe: [0, 1, 2], keyboard: [0, 1, 2, 3], hints: [0, 1, 2, 3, 5] };
 const SPEED_SHARE = 0.5; // the speed bonus at the start of the round
 const PARTIAL_SHARE = 0.5; // every secret test passing, not solved
 const MIN_SHARE = 0.2; // a solve is always worth at least this

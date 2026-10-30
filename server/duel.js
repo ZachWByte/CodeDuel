@@ -28,6 +28,9 @@
 //   duel:action { type, result?, seq }  (round actions testRun / submitResult / reveal / finish)
 //   duel:chat { text, team? }     (team: only your teammates see it)
 //   duel:voice { audio, seconds, team? }  (a voice message: WebM, Ogg or MP4 audio, up to 15 seconds)
+//   duel:power { type: 'blackout' | 'wipe' }   (a power-up on every opponent)
+//   duel:power { type: 'keyboard', targetId }  (mouse keys on one opponent)
+//   duel:hint { questionId, kind: 'outline' | 'lines' } -> { ok, hint }
 //   duel:view { questionId }      (the question you have open, for spectators and teammates)
 //   duel:progress { questionId, lines }  (lines of code in the editor, sent every few seconds at most)
 //   duel:code { questionId, code }       (your code, about once a second while it changes; not in a team)
@@ -41,6 +44,8 @@
 //                 (a voice message has voice: { mime, seconds, audio }; audio is null once
 //                 it is older than the room's last few clips)
 //   duel:watch    { playerId, questionId, locked, code }: an opponent's code to spectate
+//   duel:wipe     { questionId, code, by }: your code was wiped (players on their own; a
+//                 team's wipe arrives as a change to its shared document)
 //   team:updates  { questionId, from, updates }: teammates' edits
 //   team:cursor   { playerId, name, team, questionId, pos }
 //
@@ -59,17 +64,30 @@
 // limit, a cap on connections per IP and on rooms, same-origin browsers only,
 // and reported test counts must match the question.
 //
+// Power-ups (the host turns each on and sets how many uses everyone gets per round).
+// Blackout and wipe hit every opponent at once:
+//   blackout  their editors go dark for BLACKOUT_MS; then a cooldown of
+//             BLACKOUT_COOLDOWN_MS before you can use it again. The server holds back
+//             their runs and submits until it is over.
+//   wipe      their code on the question each has open goes back to the start.
+// Mouse keys hits one opponent you pick:
+//   keyboard  for KEYBOARD_MS they cannot type in the editor with their keyboard, only
+//             by clicking an on-screen one (their browser enforces it).
+//   hint      help on a question of yours: pseudo-code or lines of a solution (server/hints.js).
+//
 // Solves are spot-checked: in Python §3 / §4 a submit that claims to pass every test
 // must include the code, and the server re-runs a few of the tests (server/verify.js).
 // A side's actions are handled one at a time, and its clock waits while code is
 // being checked, so the check never costs time.
 import { Server } from 'socket.io';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { createRound, reduceRound, questionIndex, rankSides, ROUND_MINUTES, REVEAL_COSTS, DEFAULT_ROUND } from '../src/state/round.js';
+import { createRound, reduceRound, questionIndex, rankSides, ROUND_MINUTES, REVEAL_COSTS, DEFAULT_ROUND, POWERUP_USES } from '../src/state/round.js';
 import { LANG_LABELS, MODE_LABELS, DIFFICULTY_LABELS, CATEGORIES, filterQuestions, getQuestion } from '../src/questions/index.js';
 import { resolveTests, findBanned, linesChanged, startingCode } from '../src/judge/resolve.js';
 import { createVerifier, VERIFY_LANGS } from './verify.js';
+import { ChangeSet } from '@codemirror/state';
 import { createDoc, docString, docVersion, pushUpdates, updatesSince } from './collab.js';
+import { nextHint, HINT_KINDS } from './hints.js';
 import { pickQuestions } from '../src/questions/pick.js';
 import { startBot, BOT_LEVELS } from './bot.js';
 import { attachAdmin } from './admin.js';
@@ -101,6 +119,9 @@ const MAX_MESSAGE_BYTES = 128 * 1024; // room for a voice message
 const MAX_CODE_CHARS = 20_000;
 const VERIFY_TESTS = 2; // tests re-run per checked solve
 const ACTIONS = ['testRun', 'submitResult', 'reveal', 'finish'];
+export const BLACKOUT_MS = 15 * 1000; // short, as it hits everyone
+export const BLACKOUT_COOLDOWN_MS = 3 * 60 * 1000;
+export const KEYBOARD_MS = 30 * 1000;
 const MODES = Object.keys(MODE_LABELS);
 
 // Stand-ins for the characters of code a spectator may not see yet.
@@ -152,15 +173,22 @@ const randomOf = (xs) => xs[Math.floor(Math.random() * xs.length)];
 const newSalt = () => randomBytes(4).readUInt32LE(0);
 
 /**
- * Room settings: { lang, difficulty, count, minutes, partial, revealCost }. The mode
- * and topic are chosen per round. Missing round options take their defaults.
+ * Room settings: { lang, difficulty, count, minutes, partial, revealCost, powerups }.
+ * The mode and topic are chosen per round. Missing round options take their
+ * defaults; power-ups are off unless set.
  */
 export function validConfig(c) {
   if (!c || !has(LANG_LABELS, c.lang) || !has(DIFFICULTY_LABELS, c.difficulty) || !COUNTS.includes(c.count)) return null;
   const minutes = c.minutes === undefined ? DEFAULT_ROUND.minutes : c.minutes;
   const revealCost = c.revealCost === undefined ? DEFAULT_ROUND.revealCost : c.revealCost;
   if (!ROUND_MINUTES.includes(minutes) || !REVEAL_COSTS.includes(revealCost)) return null;
-  return { lang: c.lang, difficulty: c.difficulty, count: c.count, minutes, partial: c.partial === true, revealCost };
+  const powerups = {};
+  for (const [key, allowed] of Object.entries(POWERUP_USES)) {
+    const n = c.powerups?.[key] ?? 0;
+    if (!allowed.includes(n)) return null;
+    powerups[key] = n;
+  }
+  return { lang: c.lang, difficulty: c.difficulty, count: c.count, minutes, partial: c.partial === true, revealCost, powerups };
 }
 
 /** A pick: { mode, category }, each a real value or 'random'. */
@@ -326,6 +354,9 @@ export function attachDuel(httpServer, {
       startsAt: room.startsAt,
       youId: me.id,
       yourSeq: me.seq, // the last of your actions the server has applied
+      // Your power-ups left this round, and the hints your side has (by question).
+      powers: me.powers ?? null,
+      hints: Object.fromEntries(sideOf(room, me)?.hints ?? []),
       hostId: room.hostId,
       maxPlayers: MAX_PLAYERS,
       teams: TEAMS,
@@ -345,6 +376,10 @@ export function attachDuel(httpServer, {
           state: side?.state ?? null, // the side's state: teammates share one
           viewing: p.viewing, // the question they have open
           progress: p.progress, // { questionId, lines } for the question they have open
+          blackedUntil: p.blackedUntil > Date.now() ? p.blackedUntil : null,
+          blackedBy: p.blackedUntil > Date.now() ? p.blackedBy : null,
+          keyboardUntil: p.keyboardUntil > Date.now() ? p.keyboardUntil : null,
+          keyboardBy: p.keyboardUntil > Date.now() ? p.keyboardBy : null,
         };
       }),
     };
@@ -565,6 +600,7 @@ export function attachDuel(httpServer, {
         sides.set(key, {
           key, team: p.team, memberIds: [], state: createRound({ config, questions, now }),
           docs: new Map(), checking: 0, actions: Promise.resolve(),
+          hints: new Map(), // questionId -> { outline, lines, linesShown, more }
         });
       }
       sides.get(key).memberIds.push(p.id);
@@ -596,17 +632,147 @@ export function attachDuel(httpServer, {
     room.round += 1;
     const config = { ...room.config, mode: settled.mode, category: settled.category };
     room.sides = makeSides(players, config, questions, room.startsAt);
+    const uses = room.config.powerups;
     for (const p of players) {
       p.code = null;
       p.viewing = null;
       p.progress = null;
       p.watchSent.clear();
+      p.powers = { blackout: uses.blackout, wipe: uses.wipe, keyboard: uses.keyboard, hints: uses.hints, blackoutReadyAt: 0 };
+      p.blackedUntil = 0;
+      p.keyboardUntil = 0;
     }
     room.roundInfo = { round: room.round, mode: settled.mode, category: settled.category, choice: decided.choice, note: decided.note };
     room.status = 'playing';
     const teams = room.sides.filter((s) => s.memberIds.length > 1).map((s) => sideName(room, s));
     say(room, null, `Round ${room.round}: ${MODE_LABELS[settled.mode]} · ${CATEGORIES[settled.category].label}, ${questions.length} question${questions.length === 1 ? '' : 's'} in ${room.config.minutes} minutes — ${decided.note}${decided.choice.mode === 'random' || decided.choice.category === 'random' ? ' (random)' : ''}.${teams.length ? ` Teams: ${teams.join(', ')}.` : ''}`);
     return true;
+  }
+
+  /** A team's shared document for a question (made from the starting code the first time). */
+  function teamDoc(side, questionId) {
+    if (!side.docs.has(questionId)) {
+      const doc = createDoc(startingCode(getQuestion(questionId), side.state.config.lang));
+      doc.salt = newSalt();
+      side.docs.set(questionId, doc);
+    }
+    return side.docs.get(questionId);
+  }
+
+  // ---------------------------------------------------------------- power-ups
+
+  /**
+   * The opponents a power-up of `player`'s hits now (everyone still playing on
+   * another side). -> { targets } | { error }
+   */
+  function powerTargets(room, player) {
+    if (room.status !== 'playing' || (room.startsAt && Date.now() < room.startsAt)) return { error: 'Power-ups work during a round.' };
+    const mySide = sideOf(room, player);
+    if (mySide?.state.status !== 'playing') return { error: 'Your round is over.' };
+    const targets = active(room).filter((p) => {
+      const side = sideOf(room, p);
+      return side && side !== mySide && side.state.status === 'playing';
+    });
+    return targets.length ? { targets } : { error: 'Everyone else has finished the round.' };
+  }
+
+  const names = (ps) => ps.map((p) => p.name).join(', ');
+
+  /** Blacks out every opponent's editor. */
+  function blackout(room, player, targets) {
+    const now = Date.now();
+    const pw = player.powers;
+    if (!pw?.blackout) return { error: 'You have no blackouts left.' };
+    if (now < pw.blackoutReadyAt) return { error: `Blackout is cooling down: ${Math.ceil((pw.blackoutReadyAt - now) / 1000)} s left.` };
+    pw.blackout -= 1;
+    pw.blackoutReadyAt = now + BLACKOUT_COOLDOWN_MS;
+    for (const t of targets) {
+      t.blackedUntil = Math.max(t.blackedUntil, now + BLACKOUT_MS);
+      t.blackedBy = player.name;
+    }
+    say(room, null, `🌑 ${player.name} blacked out everyone (${names(targets)}) for ${BLACKOUT_MS / 1000} seconds.`);
+    broadcast(room);
+    return null;
+  }
+
+  /** Mouse keys: one opponent types with an on-screen keyboard for a while. */
+  function mouseKeys(room, player, targets, targetId) {
+    const now = Date.now();
+    if (!player.powers?.keyboard) return { error: 'You have no Mouse keys left.' };
+    const target = targets.find((p) => p.id === targetId);
+    if (!target) return { error: 'Pick an opponent who is still playing.' };
+    if (target.bot) return { error: 'Bots do not use a keyboard.' };
+    if (target.keyboardUntil > now) return { error: `${target.name} already has Mouse keys.` };
+    player.powers.keyboard -= 1;
+    target.keyboardUntil = now + KEYBOARD_MS;
+    target.keyboardBy = player.name;
+    say(room, null, `⌨️ ${player.name} took ${target.name}'s keyboard for ${KEYBOARD_MS / 1000} seconds: on-screen keys only.`);
+    broadcast(room);
+    return null;
+  }
+
+  /** Puts a question of a side back to its starting code. */
+  function wipeQuestion(room, side, target, questionId, by) {
+    const start = startingCode(getQuestion(questionId), side.state.config.lang);
+    if (side.team) {
+      // A change to the team's document, as if someone had typed it.
+      const doc = teamDoc(side, questionId);
+      const len = doc.text.length;
+      const changes = ChangeSet.of([{ from: 0, to: len, insert: start }], len).toJSON();
+      const r = pushUpdates(doc, docVersion(doc), [{ clientID: 'wipe', changes }], { maxLength: MAX_CODE_CHARS });
+      if (!r.ok) return;
+      for (const p of members(room, side)) {
+        if (p.socketId) io.to(p.socketId).emit('team:updates', { questionId, from: r.from, updates: r.updates });
+      }
+      return;
+    }
+    if (target.socketId) io.to(target.socketId).emit('duel:wipe', { questionId, code: start, by });
+    const salt = target.code?.questionId === questionId ? target.code.salt : newSalt();
+    target.code = { questionId, text: start, salt, scrambled: scramble(start, salt) };
+  }
+
+  /** Wipes every opponent's code on the question they have open (not solved ones, not bots). */
+  function wipe(room, player, targets) {
+    if (!player.powers?.wipe) return { error: 'You have no wipes left.' };
+    const done = new Set(); // side key | question: a team's question is wiped once
+    const hit = [];
+    for (const t of targets) {
+      if (t.bot) continue;
+      const side = sideOf(room, t);
+      const questionId = viewingOf(side, t);
+      if (side.state.qs[questionIndex(side.state, questionId)]?.status === 'solved') continue;
+      const key = `${side.key}|${questionId}`;
+      if (!done.has(key)) wipeQuestion(room, side, t, questionId, player.name);
+      done.add(key);
+      hit.push(t);
+    }
+    if (hit.length === 0) return { error: 'Nobody has code to wipe right now (bots, or questions already solved).' };
+    player.powers.wipe -= 1;
+    scheduleWatch(room);
+    say(room, null, `🧨 ${player.name} wiped everyone's code (${names(hit)}) on the question they had open.`);
+    broadcast(room);
+    return null;
+  }
+
+  /** A hint for the player's side on one of its questions. -> { ok, hint } | { error } */
+  function useHint(room, player, questionId, kind) {
+    const side = sideOf(room, player);
+    if (room.status !== 'playing' || side?.state.status !== 'playing') return { error: 'Hints work during a round.' };
+    if (!player.powers?.hints) return { error: 'You have no hints left.' };
+    if (!HINT_KINDS.includes(kind)) return { error: 'Unknown hint.' };
+    const i = typeof questionId === 'string' ? questionIndex(side.state, questionId) : -1;
+    if (i < 0) return { error: 'That question is not in your round.' };
+    if (side.state.qs[i].status === 'solved') return { error: 'You already solved that one.' };
+    const seen = side.hints.get(questionId) ?? {};
+    const next = nextHint(getQuestion(questionId), side.state.config.lang, kind, seen);
+    if (!next) return { error: kind === 'lines' ? 'There is nothing more of that to show.' : 'You already have that hint.' };
+    const hint = { ...seen, [kind]: next.text, more: kind === 'lines' ? next.more : seen.more ?? true };
+    if (kind === 'lines') hint.linesShown = next.linesShown;
+    side.hints.set(questionId, hint);
+    player.powers.hints -= 1;
+    if (side.team && side.memberIds.length > 1) say(room, null, `💡 ${player.name} used a hint on ${getQuestion(questionId)?.title}.`, side.team);
+    broadcast(room);
+    return { ok: true, hint };
   }
 
   /**
@@ -640,7 +806,8 @@ export function attachDuel(httpServer, {
   }
 
   /** Handles one round action from a player (a side's actions run in order). */
-  async function handleAction(token, socket, msg, now) {
+  async function handleAction(token, socket, msg, arrivedAt) {
+    let now = arrivedAt;
     const s = seats.get(token);
     if (!s) return;
     const { room, player } = s;
@@ -657,6 +824,12 @@ export function attachDuel(httpServer, {
     };
     if (room.status !== 'playing' || !side || !ACTIONS.includes(msg?.type) ||
       (room.startsAt && now < room.startsAt)) return echo();
+    // Blacked out: runs and submits wait until it is over (and count from then).
+    if (msg.type !== 'finish' && player.blackedUntil > Date.now()) {
+      await new Promise((r) => setTimeout(r, player.blackedUntil - Date.now()).unref?.());
+      now = Date.now();
+      if (room.status !== 'playing') return echo();
+    }
     const action = { type: msg.type, now };
     if (msg.type !== 'finish') {
       action.result = cleanResult(msg.type, msg.result, side.state);
@@ -861,6 +1034,21 @@ export function attachDuel(httpServer, {
       return null;
     });
 
+    handle('duel:power', ({ type, targetId }) => {
+      const s = mine();
+      if (!s) return { error: 'You are not in a room.' };
+      if (!['blackout', 'wipe', 'keyboard'].includes(type)) return { error: 'Unknown power-up.' };
+      const { targets, error } = powerTargets(s.room, s.player);
+      if (error) return { error };
+      if (type === 'keyboard') return mouseKeys(s.room, s.player, targets, targetId);
+      return type === 'blackout' ? blackout(s.room, s.player, targets) : wipe(s.room, s.player, targets);
+    });
+
+    handle('duel:hint', ({ questionId, kind }) => {
+      const s = mine();
+      return s ? useHint(s.room, s.player, questionId, kind) : { error: 'You are not in a room.' };
+    });
+
     handle('duel:team', ({ team, playerId }) => {
       const s = mine();
       if (!s || s.room.status !== 'lobby') return { error: 'Teams are chosen in the lobby.' };
@@ -1002,14 +1190,6 @@ export function attachDuel(httpServer, {
     }));
 
     // ---------------------------------------------------------------- team editors
-    const teamDoc = (s, questionId) => {
-      if (!s.side.docs.has(questionId)) {
-        const doc = createDoc(startingCode(getQuestion(questionId), s.side.state.config.lang));
-        doc.salt = newSalt();
-        s.side.docs.set(questionId, doc);
-      }
-      return s.side.docs.get(questionId);
-    };
     const inTeam = (questionId) => {
       const s = inRound(questionId);
       return s?.side.team ? s : null;
@@ -1019,13 +1199,13 @@ export function attachDuel(httpServer, {
     handle('team:open', ({ questionId }) => {
       const s = inTeam(questionId);
       if (!s) return { error: 'You are not in a team.' };
-      return fullDoc(teamDoc(s, questionId));
+      return fullDoc(teamDoc(s.side, questionId));
     });
 
     handle('team:pull', ({ questionId, version }) => {
       const s = inTeam(questionId);
       if (!s) return { error: 'You are not in a team.' };
-      const doc = teamDoc(s, questionId);
+      const doc = teamDoc(s.side, questionId);
       const updates = updatesSince(doc, version);
       return updates ? { from: version, updates } : { resync: fullDoc(doc) };
     });
@@ -1033,7 +1213,9 @@ export function attachDuel(httpServer, {
     handle('team:push', ({ questionId, version, updates }) => {
       const s = inTeam(questionId);
       if (!s) return { error: 'You are not in a team.' };
-      const doc = teamDoc(s, questionId);
+      const doc = teamDoc(s.side, questionId);
+      // A blacked-out player cannot type (their browser locks the editor too).
+      if (s.player.blackedUntil > Date.now()) return { resync: fullDoc(doc) };
       const r = pushUpdates(doc, version, updates, { maxLength: MAX_CODE_CHARS });
       if (r.stale) {
         const missed = updatesSince(doc, version);

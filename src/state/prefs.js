@@ -1,5 +1,5 @@
 // View preferences. They apply through CSS variables on <html>, so every screen
-// picks them up; the editor also listens for line wrapping.
+// picks them up; the editor also listens for line wrapping and autocomplete.
 import { loadPrefs, savePrefs } from './storage.js';
 
 export const LIMITS = {
@@ -7,7 +7,7 @@ export const LIMITS = {
   editorFont: { min: 11, max: 24, step: 1 }, // px
   problemWidth: { min: 24, max: 62 }, // % of the game area
 };
-export const DEFAULT_PREFS = { editorSide: 'right', zoom: 100, editorFont: 14, wrap: false, problemWidth: 38 };
+export const DEFAULT_PREFS = { editorSide: 'right', zoom: 100, editorFont: 14, wrap: false, autocomplete: true, problemWidth: 38 };
 
 const clamp = (v, { min, max }, fallback) => (Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback);
 
@@ -17,6 +17,7 @@ function clean(p) {
     zoom: Math.round(clamp(p.zoom, LIMITS.zoom, DEFAULT_PREFS.zoom)),
     editorFont: Math.round(clamp(p.editorFont, LIMITS.editorFont, DEFAULT_PREFS.editorFont)),
     wrap: p.wrap === true,
+    autocomplete: p.autocomplete !== false,
     problemWidth: Math.round(clamp(p.problemWidth, LIMITS.problemWidth, DEFAULT_PREFS.problemWidth) * 10) / 10,
   };
 }

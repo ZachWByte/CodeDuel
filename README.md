@@ -144,6 +144,22 @@ per round come from the settings above) and shows a 4-letter code and a link
 - **Start now:** the host can start the round without waiting for everyone to be ready.
   The host's shown pick counts as their vote; a missing vote is skipped (a coin flip
   between the votes cast), and if last place has not chosen yet the round is random.
+- **Power-ups** (off unless the host turns them on; everyone gets the same uses, every round),
+  from the ⚡ Power-ups button in the round header. Blackout and Wipe hit **every opponent at
+  once**, so they are short and few:
+  - **Blackout** (1–3 uses): every opponent's editor goes dark for 15 seconds; then a
+    3-minute cooldown. The server holds their runs and submits until it is over.
+  - **Wipe** (1–2 uses): every opponent's code on the question they have open goes back to
+    the starter (a team's shared document too), with no undo. Not on questions already
+    solved, and not bots.
+  - **Mouse keys** (1–3 uses, on one opponent you pick): for 30 seconds their keyboard
+    cannot change their code; an on-screen keyboard appears over the output area and they
+    type by clicking it (Shift, Caps, Tab, Enter, Backspace and arrows included). Moving
+    the cursor with the arrow keys, Run / Submit shortcuts and the chat still work.
+  - **Hints** (1, 2, 3 or 5): for a question of yours, pseudo-code (the solution's loops and
+    conditions, with what it assigns and returns blanked out) or the next 3 lines of a
+    solution. In Bug Hunt: which line the bug is on, or the fixed line. They show in the
+    problem panel, and teammates share them.
 - **Playing:** when everyone is ready (or the host starts) there is a 3-second countdown, then every side gets
   the same questions on the same clock. Under each question's title, "Worth up to N now"
   shows the most it can still score and what wrong submits, test runs, reveals and
