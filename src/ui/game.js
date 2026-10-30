@@ -14,12 +14,15 @@ import { markEl } from './annotate.js';
 import { problemView, outputView, resultsView, breakdownRows, watchEngine } from './play-parts.js';
 
 const DRAFT_EVERY_MS = 3000;
+const CODE_EVERY_MS = 1000;
 
 /**
- * renderGame(root, { store, resumed, onFinished, onQuit })
+ * renderGame(root, { store, resumed, onFinished, onQuit, onCode?, onSolved? })
  * store: { getState(), dispatch(action), subscribe(fn) -> unsubscribe }
+ * onCode(questionId, code): the editor's code, at most about once a second while it changes.
+ * onSolved(questionId, code): the code that solved a question.
  */
-export function renderGame(root, { store, resumed, onFinished, onQuit }) {
+export function renderGame(root, { store, resumed, onFinished, onQuit, onCode = null, onSolved = null }) {
   const quitMessage = 'Leave this session? Your progress in it will be lost.';
   const { lang, mode, difficulty } = store.getState().config;
   const fam = LANG_FAMILY[lang];
@@ -436,6 +439,7 @@ export function renderGame(root, { store, resumed, onFinished, onQuit }) {
     }
     if (state.current.status !== prev.current.status) {
       if (state.current.status === 'solved') {
+        onSolved?.(q.id, editor.getCode());
         saveBestIfBetter(q.id, lang, {
           points: state.current.points,
           timeSec: Math.round((state.current.endedAt - state.current.startedAt) / 1000),
@@ -455,6 +459,15 @@ export function renderGame(root, { store, resumed, onFinished, onQuit }) {
     updateHeader();
   }, 250);
   const draftTimer = setInterval(saveDraftNow, DRAFT_EVERY_MS);
+  let sentCode = null;
+  const codeTimer = onCode ? setInterval(() => {
+    if (!q) return;
+    const code = editor.getCode();
+    const key = `${q.id}\n${code}`;
+    if (key === sentCode) return;
+    sentCode = key;
+    onCode(q.id, code);
+  }, CODE_EVERY_MS) : 0;
 
   const onUnload = () => saveDraftNow();
   window.addEventListener('beforeunload', onUnload);
@@ -468,6 +481,7 @@ export function renderGame(root, { store, resumed, onFinished, onQuit }) {
     saveDraftNow();
     clearInterval(timer);
     clearInterval(draftTimer);
+    clearInterval(codeTimer);
     window.removeEventListener('beforeunload', onUnload);
     offStore();
     offEngine();

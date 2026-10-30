@@ -70,6 +70,13 @@ export function request(event, payload = {}) {
 
 export const send = (event, payload = {}) => connection().emit(event, payload);
 
+/** fn(payload) for every `event` from the server. -> stop() */
+export function on(event, fn) {
+  const s = connection();
+  s.on(event, fn);
+  return () => s.off(event, fn);
+}
+
 export function onRoom(fn) {
   const s = connection();
   s.on('duel:room', fn);

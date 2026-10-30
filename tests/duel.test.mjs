@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { io as connect } from 'socket.io-client';
-import { attachDuel, validConfig, validPick } from '../server/duel.js';
+import { attachDuel, validConfig, validPick, audioType } from '../server/duel.js';
+import { createSolutionStore } from '../server/solutions.js';
 import { getQuestion } from '../src/questions/index.js';
 import { resolveTests } from '../src/judge/resolve.js';
 
@@ -12,7 +13,8 @@ const raceLists = { mode: 'code-race', category: 'lists' };
 
 async function setup(options = {}) {
   const http = createServer();
-  const duel = attachDuel(http, { log: process.env.DUEL_LOG ? console.log : () => {}, countdownMs: 0, ...options });
+  const solutions = createSolutionStore({ file: ':memory:' });
+  const duel = attachDuel(http, { log: process.env.DUEL_LOG ? console.log : () => {}, countdownMs: 0, solutions, ...options });
   await new Promise((r) => http.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${http.address().port}`;
   const clients = [];
@@ -40,7 +42,7 @@ async function setup(options = {}) {
     clients.forEach((c) => c.socket.close());
     await duel.close();
   };
-  return { client, close, duel };
+  return { client, close, duel, solutions };
 }
 
 const me = (room) => room.players.find((p) => p.id === room.youId);
@@ -155,6 +157,127 @@ test('chat reaches the other player and is rate-limited', async () => {
     await new Promise((r) => setTimeout(r, 100));
     const said = b.chat.filter((m) => m.fromId === me(a.room).id).map((m) => m.text);
     assert.deepEqual(said, ['hello 0', 'hello 1', 'hello 2', 'hello 3', 'hello 4']);
+  } finally {
+    await close();
+  }
+});
+
+test('the host can start the round without waiting for everyone to be ready', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b } = await pair(client);
+    assert.match((await b.request('duel:start', {})).error, /Only the host/);
+    // Bob has not voted or readied up; Ada's shown pick becomes her vote and the round starts.
+    assert.ok((await a.request('duel:start', { pick: raceLists })).ok);
+    const ra = await a.until((r) => r.status === 'playing');
+    assert.equal(ra.roundInfo.mode, 'code-race');
+    assert.equal(ra.roundInfo.category, 'lists');
+    assert.match(ra.roundInfo.note, /Ada's vote, the only one cast; Ada \(host\) started it without waiting/);
+    assert.equal((await b.until((r) => r.status === 'playing')).round, 1);
+
+    // After the round, Bob (last) picks; if he has not, the host's start makes it random.
+    a.socket.emit('duel:action', { type: 'submitResult', result: solve(firstQ(ra)) });
+    b.socket.emit('duel:action', { type: 'finish' });
+    await a.until((r) => r.status === 'finished');
+    await a.request('duel:next');
+    const lobby = await a.until((r) => r.status === 'lobby');
+    assert.equal(lobby.pick.pickerId, named(lobby, 'Bob').id);
+    assert.ok((await a.request('duel:start', { pick: raceLists })).ok);
+    const r2 = await a.until((r) => r.status === 'playing' && r.round === 2);
+    assert.match(r2.roundInfo.note, /^random/);
+  } finally {
+    await close();
+  }
+});
+
+test('a duel solve is saved with its code', async () => {
+  const { client, close, solutions } = await setup();
+  try {
+    const { a, b, code } = await pair(client);
+    const ra = await startRound(a, b);
+    const qid = firstQ(ra);
+    a.socket.emit('duel:action', { type: 'submitResult', result: solve(qid) });
+    await a.until((r) => qOf(r, qid).status === 'solved');
+    const [saved] = solutions.forQuestion(qid);
+    assert.equal(saved.name, 'Ada');
+    assert.equal(saved.kind, 'duel');
+    assert.equal(saved.room, code);
+    assert.equal(saved.code, getQuestion(qid).solution.sicpy);
+    assert.ok(saved.points > 0);
+  } finally {
+    await close();
+  }
+});
+
+test('the host cannot start alone', async () => {
+  const { client, close } = await setup();
+  try {
+    const a = client();
+    await a.until((r) => r === null);
+    await a.request('duel:create', { name: 'Ada', config });
+    assert.match((await a.request('duel:start', { pick: raceLists })).error, /someone to join/);
+  } finally {
+    await close();
+  }
+});
+
+/** A fake clip that starts like a WebM file. */
+const webm = (bytes = 2000) => {
+  const buf = Buffer.alloc(bytes, 7);
+  buf.writeUInt32BE(0x1a45dfa3, 0);
+  return buf;
+};
+
+test('voice messages reach the room (or the team), are checked and rate-limited', async () => {
+  const { client, close } = await setup();
+  try {
+    assert.equal(audioType(webm()), 'audio/webm');
+    assert.equal(audioType(Buffer.from('OggS\0\0\0\0\0\0\0\0')), 'audio/ogg');
+    assert.equal(audioType(Buffer.from('\0\0\0\x20ftypM4A \0\0')), 'audio/mp4');
+    assert.equal(audioType(Buffer.from('<html><script>alert(1)</script>')), null);
+
+    const { a, b } = await pair(client);
+    assert.ok((await a.request('duel:voice', { audio: webm(), seconds: 2.34 })).ok);
+    await waitFor(() => b.chat.some((m) => m.voice));
+    const msg = b.chat.find((m) => m.voice);
+    assert.equal(msg.fromId, me(a.room).id);
+    assert.equal(msg.voice.mime, 'audio/webm');
+    assert.equal(msg.voice.seconds, 2.3);
+    assert.equal(Buffer.from(msg.voice.audio).length, 2000);
+
+    assert.ok((await a.request('duel:voice', { audio: Buffer.from('not audio at all'), seconds: 1 })).error, 'not audio');
+    assert.ok((await a.request('duel:voice', { audio: webm(), seconds: 40 })).error, 'too long');
+    assert.ok((await a.request('duel:voice', { audio: webm(100 * 1024), seconds: 5 })).error, 'too big');
+    assert.ok((await a.request('duel:voice', { audio: 'text', seconds: 1 })).error, 'not binary');
+    assert.ok((await a.request('duel:voice', { audio: webm(), seconds: 1, team: true })).error, 'Ada has no team');
+
+    assert.ok((await a.request('duel:voice', { audio: webm(), seconds: 1 })).ok);
+    assert.ok((await a.request('duel:voice', { audio: webm(), seconds: 1 })).ok);
+    assert.match((await a.request('duel:voice', { audio: webm(), seconds: 1 })).error, /Too many/);
+  } finally {
+    await close();
+  }
+});
+
+test('a room keeps the audio of its last ten voice clips only', async () => {
+  const { client, close, duel } = await setup();
+  try {
+    const players = [];
+    const a = client();
+    await a.until((r) => r === null);
+    const { code } = await a.request('duel:create', { name: 'P0', config });
+    players.push(a);
+    for (let i = 1; i < 4; i++) {
+      const p = client();
+      await p.until((r) => r === null);
+      await p.request('duel:join', { code, name: `P${i}` });
+      players.push(p);
+    }
+    // Three clips each (the voice limit), twelve in all.
+    for (const p of players) for (let i = 0; i < 3; i++) assert.ok((await p.request('duel:voice', { audio: webm(), seconds: 1 })).ok);
+    const clips = duel.rooms.get(code).chat.filter((m) => m.voice);
+    assert.equal(clips.length, 12);
+    assert.deepEqual(clips.map((m) => m.voice.audio !== null), [false, false, ...Array(10).fill(true)]);
   } finally {
     await close();
   }

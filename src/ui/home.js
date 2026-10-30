@@ -8,12 +8,34 @@ import { icon, brandMark, clockCase } from './icons.js';
 
 export const COUNTS = [1, 3, 5, 10];
 
+let tipId = 0;
+
+/** An ⓘ button that shows `content` in a small bubble (click or focus; Escape or a click elsewhere closes it). */
+function infoButton(label, content) {
+  const id = `info-tip-${++tipId}`;
+  const tip = h('div.info-tip', { id, role: 'tooltip', hidden: true }, content);
+  const btn = h('button.info-btn', { type: 'button', 'aria-label': label, 'aria-describedby': id, 'aria-expanded': 'false' }, icon('info'));
+  const wrap = h('span.info', {}, btn, tip);
+  const onDoc = (e) => {
+    if (e.type === 'keydown' ? e.key === 'Escape' : !wrap.contains(e.target)) set(false);
+  };
+  function set(open) {
+    tip.hidden = !open;
+    btn.setAttribute('aria-expanded', String(open));
+    const fn = open ? document.addEventListener : document.removeEventListener;
+    fn.call(document, 'pointerdown', onDoc);
+    fn.call(document, 'keydown', onDoc);
+  }
+  btn.addEventListener('click', () => set(tip.hidden));
+  return wrap;
+}
+
 /**
  * renderHome(root, { onStart(config), onPractice(config, questionId),
- *   onCreateDuel(config, name), onBotDuel(config, name), onJoinDuel(code, name), roomCode? })
- * The duel callbacks resolve with { error } when they fail.
+ *   onCreateDuel(config, name), onBotDuel(config, name), onJoinDuel(code, name), admin?, roomCode? })
+ * The duel callbacks resolve with { error } when they fail. admin: { loggedIn(), login(), show(), logout() }.
  */
-export function renderHome(root, { onStart, onPractice, onCreateDuel, onBotDuel, onJoinDuel, roomCode = '' }) {
+export function renderHome(root, { onStart, onPractice, onCreateDuel, onBotDuel, onJoinDuel, admin = null, roomCode = '' }) {
   let settings = loadSettings();
   const browser = { open: false, text: '', mode: 'all', difficulty: 'all' };
   const duel = { name: loadName(), code: roomCode, error: '', busy: false };
@@ -33,22 +55,24 @@ export function renderHome(root, { onStart, onPractice, onCreateDuel, onBotDuel,
     setChildren(root, h('div.home', {},
       h('header.home-header', {},
         h('h1.brand', {}, brandMark(), h('span.brand-name', {}, 'Code Duel')),
-        h('p.tagline', {}, 'Race the clock. Write it, or find the bug.'),
-        viewButton()),
+        viewButton(),
+        drawAccount()),
 
       h('div.home-grid', {},
         h('section.setup.card', { 'aria-label': 'Solo game' },
           h('h2.card-title', {}, icon('clock'), 'Play solo'),
           h('div.field', {}, h('label', {}, 'Language'),
-            segmented('Language', Object.entries(LANG_LABELS), settings.lang, (lang) => update({ lang }))),
-          h('div.mode-help', {}, LANG_DOCS[settings.lang]
-            ? ['Source Academy ', LANG_LABELS[settings.lang], ' · ', h('a', { href: LANG_DOCS[settings.lang], target: '_blank', rel: 'noopener' }, 'language reference', icon('external'))]
-            : 'Standard Python 3 (runs with Pyodide).'),
+            h('div.field-control', {},
+              segmented('Language', Object.entries(LANG_LABELS), settings.lang, (lang) => update({ lang })),
+              infoButton('About the language', LANG_DOCS[settings.lang]
+                ? ['Source Academy ', LANG_LABELS[settings.lang], ' · ', h('a', { href: LANG_DOCS[settings.lang], target: '_blank', rel: 'noopener' }, 'language reference', icon('external'))]
+                : 'Standard Python 3 (runs with Pyodide).'))),
           h('div.field', {}, h('label', {}, 'Mode'),
-            segmented('Mode', Object.entries(MODE_LABELS), settings.mode, (mode) => update({ mode }))),
-          h('div.mode-help', {}, settings.mode === 'code-race'
-            ? 'Code Race: write a function from scratch that passes every test.'
-            : 'Bug Hunt: each program has exactly one bug. Find it and fix it.'),
+            h('div.field-control', {},
+              segmented('Mode', Object.entries(MODE_LABELS), settings.mode, (mode) => update({ mode })),
+              infoButton('About the modes', [
+                h('p', {}, h('strong', {}, 'Code Race: '), 'write a function from scratch that passes every test.'),
+                h('p', {}, h('strong', {}, 'Bug Hunt: '), 'each program has exactly one bug. Find it and fix it.')]))),
           h('div.field', {}, h('label', {}, 'Difficulty'),
             segmented('Difficulty', Object.entries(DIFFICULTY_LABELS), settings.difficulty, (difficulty) => update({ difficulty }))),
           h('div.field', {}, h('label', {}, 'Questions'),
@@ -78,6 +102,17 @@ export function renderHome(root, { onStart, onPractice, onCreateDuel, onBotDuel,
       h('footer.home-footer', {},
         'Shortcuts: ', h('kbd', {}, 'Ctrl/⌘ + Enter'), ' run · ',
         h('kbd', {}, 'Ctrl/⌘ + Shift + Enter'), ' submit')));
+  }
+
+  /** Log in (top right); once logged in as admin, the admin view and Log out. */
+  function drawAccount() {
+    if (!admin) return null;
+    if (!admin.loggedIn()) {
+      return h('button.btn.btn-ghost.btn-small#btn-login', { type: 'button', onclick: () => admin.login() }, icon('user'), 'Log in');
+    }
+    return h('span.account', {},
+      h('button.btn.btn-small#btn-admin', { type: 'button', onclick: () => admin.show() }, icon('eye'), 'Admin'),
+      h('button.btn.btn-ghost.btn-small', { type: 'button', onclick: () => admin.logout() }, 'Log out'));
   }
 
   function drawDuel() {
@@ -120,7 +155,7 @@ export function renderHome(root, { onStart, onPractice, onCreateDuel, onBotDuel,
 
     return h('section.card.duel-card', { 'aria-label': 'Play a friend' },
       h('h2.card-title', {}, icon('duel'), 'Play a friend'),
-      h('p.duel-intro', {}, 'Create a room with your Play solo language, difficulty and question count, and send your friend the code. You vote on the mode and topic, play the same questions on the same clock, and chat. The loser of each round picks the next one.'),
+      h('p.duel-intro', {}, 'Same questions, same clock. Send a friend the room code.'),
       h('div.duel-fields', {},
         h('label', { for: 'duel-name' }, 'Your name'),
         h('input#duel-name', {

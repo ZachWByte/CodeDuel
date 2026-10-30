@@ -6,11 +6,13 @@ import { renderResults } from './ui/results.js';
 import { getQuestion, LANG_LABELS } from './questions/index.js';
 import { pickQuestions } from './questions/pick.js';
 import { createSession, reduce } from './state/engine.js';
-import { loadActiveSession, saveActiveSession, clearActiveSession } from './state/storage.js';
+import { loadActiveSession, saveActiveSession, clearActiveSession, loadName } from './state/storage.js';
 import { warmUp } from './runners/runner.js';
 import { createDuel } from './duel.js';
 import { applyPrefs } from './state/prefs.js';
 import { installViewSettings } from './ui/view-settings.js';
+import { send } from './net/duel-client.js';
+import { createAdmin } from './admin.js';
 
 applyPrefs();
 installViewSettings();
@@ -44,6 +46,17 @@ function createStore(initial) {
   };
 }
 
+// Solo sessions are shown live to the admin (server/admin.js).
+let reporting = false;
+const reportSolo = (state) => {
+  reporting = true;
+  send('solo:update', { name: loadName() || null, state, now: Date.now() });
+};
+function stopReporting() {
+  if (reporting) send('solo:end');
+  reporting = false;
+}
+
 function startSession(config, questionIds) {
   const questions = questionIds ? questionIds.map(getQuestion) : pickQuestions(config);
   if (questions.length === 0) return;
@@ -55,14 +68,20 @@ function startSession(config, questionIds) {
 function showGame(state, resumed) {
   warmUp(state.config.lang);
   const store = createStore(state);
+  reportSolo(state);
+  const offReport = store.subscribe(reportSolo);
   mount(() => renderGame(root, {
     store,
     resumed,
+    onCode: (questionId, code) => send('solo:code', { questionId, code }),
+    onSolved: (questionId, code) => send('solo:solved', { questionId, code }),
     onFinished: (finished) => {
+      offReport();
       clearActiveSession();
       showResults(finished);
     },
     onQuit: () => {
+      offReport();
       clearActiveSession();
       showHome();
     },
@@ -81,6 +100,7 @@ function showResults(state) {
 }
 
 function showHome() {
+  stopReporting();
   const roomCode = (new URLSearchParams(location.search).get('room') ?? '').toUpperCase().slice(0, 4);
   mount(() => renderHome(root, {
     onStart: (config) => startSession(config),
@@ -88,11 +108,13 @@ function showHome() {
     onCreateDuel: (config, name) => duel.create(config, name),
     onBotDuel: (config, name) => duel.createWithBot(config, name),
     onJoinDuel: (code, name) => duel.join(code, name),
+    admin,
     roomCode,
   }));
 }
 
 const duel = createDuel({ root, mount, showHome });
+const admin = createAdmin({ root, mount, showHome });
 
 // Resume a duel or a session that was in progress when the page was reloaded.
 const saved = loadActiveSession();

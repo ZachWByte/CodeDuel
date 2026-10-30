@@ -141,7 +141,10 @@ per round come from the settings above) and shows a 4-letter code and a link
   random) and the topic (one of six categories, or random). If the votes differ, a coin
   flip decides. After that, **the last-placed side chooses the next one**. After a
   draw, everyone votes again.
-- **Playing:** when everyone is ready there is a 3-second countdown, then every side gets
+- **Start now:** the host can start the round without waiting for everyone to be ready.
+  The host's shown pick counts as their vote; a missing vote is skipped (a coin flip
+  between the votes cast), and if last place has not chosen yet the round is random.
+- **Playing:** when everyone is ready (or the host starts) there is a 3-second countdown, then every side gets
   the same questions on the same clock. Under each question's title, "Worth up to N now"
   shows the most it can still score and what wrong submits, test runs, reveals and
   extra lines have cost. A side's round ends when the clock runs out, when it has solved
@@ -157,7 +160,25 @@ per round come from the settings above) and shows a 4-letter code and a link
 - **Results:** final standings, and every side's score per question. The top side wins
   the round, and each of its players gets a point in the match.
 - **Chat:** open in the lobby and on the results screen. During a round it folds into a
-  side panel (with the leaderboard) behind a button with an unread count.
+  side panel (with the leaderboard) behind a button with an unread count. The mic
+  button records a voice message (up to 15 seconds; Send sends it, × or Escape throws it
+  away). The server checks it is WebM, Ogg or MP4 audio and keeps the last 10 clips per
+  room; older ones show as no longer available.
+
+- **Admin:** **Log in** (top right of the home screen) with the admin account to see
+  everyone playing, live: solo players (their question, tests, time left, score) and
+  every duel room, and the code of whoever you pick. The account comes from the
+  `ADMIN_USERNAME` / `ADMIN_PASSWORD` environment variables (default `admin` /
+  `123456`, so set your own on a public server). Wrong passwords are limited to 5 per
+  5 minutes per address.
+- **Solutions:** the admin's Solutions tab shows the code that solved each question, solo
+  and duel, with who solved it and their points. They are saved in SQLite
+  (`server/solutions.js`, Node's built-in `node:sqlite`) at `SOLUTIONS_DB` (default
+  `data/solutions.db`). Each question keeps its newest 10, and when all of them pass
+  `SOLUTIONS_MAX_MB` (default 50) or the disk is full, the oldest are deleted first.
+  Solo solves are reported by the browser and not re-checked. On Render's free plan the
+  disk is wiped on every deploy and restart, so point `SOLUTIONS_DB` at a persistent disk
+  to keep them.
 
 - `server/duel.js` runs the rooms over Socket.IO. It uses `state/round.js` as the
   referee: it keeps every side's state and owns the clock. Code still runs in each

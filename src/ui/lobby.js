@@ -1,7 +1,8 @@
 // Duel lobby, in three columns: the room (code, settings, the pick for the next
 // round), the players (and their teams), and the chat; Leave and Ready sit in the
 // bar along the bottom. Everyone sees the host's settings; only the host can
-// change them.
+// change them, and only the host can start the round without waiting for everyone
+// to be ready (Start now).
 import { h, setChildren, toast } from './dom.js';
 import { COUNTS } from './home.js';
 import { viewButton } from './view-settings.js';
@@ -105,11 +106,11 @@ function teamsLine(room) {
 }
 
 /**
- * renderLobby(root, { room, chatEl, onConfig, onPick, onReady, onTeam, onAddBot, onRemoveBot, onLeave, onDrawn })
+ * renderLobby(root, { room, chatEl, onConfig, onPick, onReady, onStart, onTeam, onAddBot, onRemoveBot, onLeave, onDrawn })
  * The callbacks return a promise of the server's reply. chatEl is placed in the third
  * column on every draw (onDrawn runs after). -> { update(room), cleanup() }
  */
-export function renderLobby(root, { room: initial, chatEl = null, onConfig, onPick, onReady, onTeam, onAddBot, onRemoveBot, onLeave, onDrawn }) {
+export function renderLobby(root, { room: initial, chatEl = null, onConfig, onPick, onReady, onStart, onTeam, onAddBot, onRemoveBot, onLeave, onDrawn }) {
   let room = initial;
   let alive = true; // a reply can arrive after the game screen has replaced this one
   let busy = false;
@@ -186,6 +187,17 @@ export function renderLobby(root, { room: initial, chatEl = null, onConfig, onPi
     }
   }
 
+  /** Host only: start now. Sends the pick shown as the host's vote if it has not been sent. */
+  async function startNow() {
+    if (busy) return;
+    busy = true;
+    try {
+      await run(onStart(canPick() && !myPick() ? shownPick() : null));
+    } finally {
+      busy = false;
+    }
+  }
+
   async function copyLink() {
     try {
       await navigator.clipboard.writeText(roomLink(room.code));
@@ -219,6 +231,7 @@ export function renderLobby(root, { room: initial, chatEl = null, onConfig, onPi
 
     let status;
     if (inRoom < 2) status = 'Waiting for someone to join…';
+    else if (isHost) status = 'The round starts when everyone is ready, or when you press Start now.';
     else if (self.ready) status = 'Waiting for everyone to be ready…';
     else status = 'The round starts as soon as everyone is ready.';
 
@@ -256,6 +269,11 @@ export function renderLobby(root, { room: initial, chatEl = null, onConfig, onPi
         h('button.btn.btn-ghost#btn-leave', { onclick: onLeave }, icon('back'), 'Leave'),
         h('span.lobby-who', {}, 'Playing as ', h('strong', {}, self.name)),
         h('span.lobby-status', { 'aria-live': 'polite' }, status),
+        isHost && onStart ? h('button.btn.btn-large#btn-start', {
+          disabled: inRoom < 2,
+          title: 'Start the round now, without waiting for everyone to be ready',
+          onclick: startNow,
+        }, 'Start now') : null,
         h(`button.btn.btn-large${self.ready ? '' : '.btn-primary'}#btn-ready`, {
           disabled: inRoom < 2,
           onclick: toggleReady,

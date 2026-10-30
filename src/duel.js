@@ -93,7 +93,10 @@ export function createDuel({ root, mount, showHome }) {
   let listening = false;
   const watches = new Map(); // playerId -> what the server lets us see of their code
   const banner = h('div.conn-banner', { hidden: true }, 'Connection lost — reconnecting to the game server…');
-  const chat = createChatDock({ onSend: (text, team) => send('duel:chat', { text, team }) });
+  const chat = createChatDock({
+    onSend: (text, team) => send('duel:chat', { text, team }),
+    onVoice: (audio, seconds, team) => request('duel:voice', { audio, seconds, team }),
+  });
 
   function listen() {
     if (listening) return;
@@ -199,6 +202,7 @@ export function createDuel({ root, mount, showHome }) {
       onConfig: (config) => request('duel:config', { config }),
       onPick: (pick) => request('duel:pick', pick),
       onReady: (ready) => request('duel:ready', { ready }),
+      onStart: (pick) => request('duel:start', { pick }),
       onTeam: (team, playerId) => request('duel:team', { team, playerId }),
       onAddBot: (level) => request('duel:addBot', { level }),
       onRemoveBot: (id) => request('duel:removeBot', { id }),
@@ -316,7 +320,7 @@ export function createDuel({ root, mount, showHome }) {
     const num = h('div.numeral.countdown-num', {});
     // Swallow keys while counting down, so nobody gets a head start in the editor.
     const block = (e) => {
-      if (e.target.closest?.('.chat-dock')) return;
+      if (e.target.closest?.('.chat-panel')) return;
       e.preventDefault();
       e.stopPropagation();
     };
