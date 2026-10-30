@@ -7,10 +7,11 @@ import { renderDuelResults } from './ui/duel-results.js';
 import { createChatDock } from './ui/chat.js';
 import { createSpectator } from './ui/spectate.js';
 import { createPowerups } from './ui/powerups.js';
+import { createExtension } from './ui/extension.js';
 import { createLeaderboard, standingText, standings, mySide, titleOf } from './ui/leaderboard.js';
 import { icon } from './ui/icons.js';
 import { displayName } from './ui/lobby.js';
-import { MODE_LABELS, CATEGORIES } from './questions/index.js';
+import { MODE_LABELS, CATEGORIES, BANK_VERSION } from './questions/index.js';
 import { reduceRound } from './state/round.js';
 import {
   request, send, on, onRoom, onChat, onVerify, onWatch, onTeamUpdates, onTeamCursor, onConnection, markInDuel, wasInDuel,
@@ -94,6 +95,10 @@ export function createDuel({ root, mount, showHome }) {
   let listening = false;
   const watches = new Map(); // playerId -> what the server lets us see of their code
   const banner = h('div.conn-banner', { hidden: true }, 'Connection lost — reconnecting to the game server…');
+  const extension = createExtension({
+    onAsk: (minutes) => request('duel:extend', { minutes }),
+    onVote: (yes) => request('duel:extendVote', { yes }),
+  });
   const chat = createChatDock({
     onSend: (text, team) => send('duel:chat', { text, team }),
     onVoice: (audio, seconds, team) => request('duel:voice', { audio, seconds, team }),
@@ -105,7 +110,11 @@ export function createDuel({ root, mount, showHome }) {
     document.body.append(banner);
     onRoom(receive);
     onChat((msg) => { if (engaged) chat.add(msg); }, (log) => { if (engaged) chat.setLog(log); });
-    onVerify(({ message }) => { if (engaged) toast(message, 7000, 'bad'); });
+    onVerify(({ questionId, message }) => {
+      if (!engaged) return;
+      toast(message, 7000, 'bad');
+      screen?.serverSaid?.(questionId, message);
+    });
     onWatch(receiveWatch);
     on('duel:wipe', ({ questionId, code, by }) => {
       if (!engaged || screen?.kind !== 'game') return;
@@ -145,6 +154,7 @@ export function createDuel({ root, mount, showHome }) {
     banner.hidden = true;
     chat.detach();
     chat.setLog([]);
+    extension.update(null);
     if (message) toast(message);
     showHome();
   }
@@ -163,6 +173,7 @@ export function createDuel({ root, mount, showHome }) {
     room = {
       ...snap,
       powers: snap.powers ? { ...snap.powers, blackoutReadyAt: at(snap.powers.blackoutReadyAt) } : null,
+      extension: snap.extension ? { ...snap.extension, until: at(snap.extension.until) } : null,
       players: snap.players.map((p) => ({ ...p, state: rebase(p.state, delta), blackedUntil: at(p.blackedUntil), keyboardUntil: at(p.keyboardUntil) })),
     };
     markInDuel(true);
@@ -170,6 +181,7 @@ export function createDuel({ root, mount, showHome }) {
     chat.setTeam(room.players.find((p) => p.id === room.youId)?.team ?? null);
     if (new URLSearchParams(location.search).has('room')) history.replaceState(null, '', location.pathname);
     route();
+    extension.update(room);
   }
 
   const me = () => room.players.find((p) => p.id === room.youId);
@@ -194,7 +206,7 @@ export function createDuel({ root, mount, showHome }) {
     }
     mount(() => {
       const view = kind === 'lobby' ? lobbyScreen() : kind === 'game' ? gameScreen(restore) : resultsScreen();
-      screen = { kind, round: room.round, update: view.update, watch: view.watch, wipe: view.wipe };
+      screen = { kind, round: room.round, update: view.update, watch: view.watch, wipe: view.wipe, serverSaid: view.serverSaid };
       return view.cleanup;
     });
   }
@@ -215,6 +227,7 @@ export function createDuel({ root, mount, showHome }) {
       onReady: (ready) => request('duel:ready', { ready }),
       onStart: (pick) => request('duel:start', { pick }),
       onTeam: (team, playerId) => request('duel:team', { team, playerId }),
+      onGrant: (playerId, on) => request('duel:grant', { playerId, on }),
       onAddBot: (level) => request('duel:addBot', { level }),
       onRemoveBot: (id) => request('duel:removeBot', { id }),
       onLeave: leave,
@@ -293,7 +306,7 @@ export function createDuel({ root, mount, showHome }) {
     view = renderRound(root, {
       store,
       resumed: restore,
-      headerExtra: h('div.hdr-duel', {}, standing, powerups.button, watchBtn, chat.toggle),
+      headerExtra: h('div.hdr-duel', {}, standing, extension.button, powerups.button, watchBtn, chat.toggle),
       watch: { el: spectator.el, button: watchBtn },
       team,
       hintsFor: (questionId) => room.hints?.[questionId] ?? null,
@@ -326,6 +339,7 @@ export function createDuel({ root, mount, showHome }) {
       },
       watch: drawWatch,
       wipe: (questionId, code) => view.wipe(questionId, code),
+      serverSaid: (questionId, message) => view.serverSaid(questionId, message),
       update(next) {
         const mine = next.players.find((p) => p.id === next.youId);
         store.receive(mine.state, next.yourSeq);
@@ -399,10 +413,10 @@ export function createDuel({ root, mount, showHome }) {
   }
 
   return {
-    create: (config, name) => enter('duel:create', { config, name }),
+    create: (config, name) => enter('duel:create', { config, name, bank: BANK_VERSION }),
     /** A room with a practice bot already in it. */
     async createWithBot(config, name, level = 'medium') {
-      const res = await enter('duel:create', { config, name });
+      const res = await enter('duel:create', { config, name, bank: BANK_VERSION });
       if (res?.error) return res;
       // By now the lobby is showing, so report a problem there.
       const added = await request('duel:addBot', { level });
@@ -411,7 +425,7 @@ export function createDuel({ root, mount, showHome }) {
     },
     join: (code, name) => {
       if (!/^[A-Z0-9]{4}$/i.test(code.trim())) return Promise.resolve({ error: 'Enter the 4-letter room code.' });
-      return enter('duel:join', { code: code.trim(), name });
+      return enter('duel:join', { code: code.trim(), name, bank: BANK_VERSION });
     },
     /** After a reload: rejoin the room this tab was in. */
     resume() {

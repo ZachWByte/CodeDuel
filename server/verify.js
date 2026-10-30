@@ -6,9 +6,12 @@
 //
 // The code runs in a worker thread with py-slang's step limit, a memory cap and a
 // wall-clock timeout, so an infinite loop or a memory bomb only costs a worker.
-// Running out of memory or time is the code's fault and counts against it. Jobs
-// run one at a time; only when the queue is full is a check skipped (the result is
-// then trusted, as before) rather than slowing every game down.
+// Running out of memory is the code's fault and counts against it. Slow code is
+// stopped by the step limit (a 'timeout' result, the same in every browser); the
+// wall clock is only a safety net, and a slow server (Render's free plan) is not
+// the player's fault, so the caller trusts the browser then. The clock starts once
+// the worker has loaded py-slang, and the worker loads at start-up. Jobs run one
+// at a time; when the queue is full a check is skipped (the result is trusted).
 import { Worker } from 'node:worker_threads';
 
 const CORE_URL = new URL('../src/runners/sicpy-core.js', import.meta.url).href;
@@ -20,6 +23,7 @@ parentPort.on('message', async ({ chapter, code, tests }) => {
   for (const t of tests) results.push(await runSicpyTest(chapter, code, t));
   parentPort.postMessage(results);
 });
+parentPort.postMessage('ready');
 `;
 
 export const VERIFY_LANGS = ['py3', 'py4'];
@@ -33,18 +37,29 @@ export const VERIFY_LANGS = ['py3', 'py4'];
  * The timeout is generous: the step limit stops slow code first, and it has to
  * allow for a slow CPU (Render's free plan).
  */
-export function createVerifier({ timeoutMs = 45_000, memoryMb = 128, maxQueue = 8 } = {}) {
+export function createVerifier({ timeoutMs = 45_000, memoryMb = 128, maxQueue = 8, prewarm = true } = {}) {
   let worker = null;
+  let ready = null; // resolves when the worker has loaded py-slang
   let chain = Promise.resolve();
   let queued = 0;
 
   function spawn() {
-    worker ??= new Worker(WORKER_SOURCE, {
+    if (worker) return worker;
+    worker = new Worker(WORKER_SOURCE, {
       eval: true,
       type: 'module',
       resourceLimits: { maxOldGenerationSizeMb: memoryMb, maxYoungGenerationSizeMb: 32 },
     });
     worker.unref();
+    const w = worker;
+    ready = new Promise((resolve) => {
+      const onReady = (m) => { if (m === 'ready') { w.off('message', onReady); resolve(); } };
+      w.on('message', onReady);
+      w.once('exit', () => {
+        if (worker === w) worker = null;
+        resolve();
+      });
+    });
     return worker;
   }
 
@@ -53,9 +68,11 @@ export function createVerifier({ timeoutMs = 45_000, memoryMb = 128, maxQueue = 
     w.terminate().catch(() => {});
   }
 
-  function runOne(job) {
+  async function runOne(job) {
+    const w = spawn();
+    await ready;
+    if (worker !== w) return { failure: 'memory' }; // it died while loading
     return new Promise((resolve) => {
-      const w = spawn();
       const finish = (value) => {
         clearTimeout(timer);
         w.off('message', onMessage);
@@ -74,6 +91,9 @@ export function createVerifier({ timeoutMs = 45_000, memoryMb = 128, maxQueue = 
       w.postMessage(job);
     });
   }
+
+  // Load py-slang now, so the first check of a game does not wait for it.
+  if (prewarm) queueMicrotask(spawn);
 
   return {
     run(chapter, code, tests) {

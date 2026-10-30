@@ -54,12 +54,15 @@ function teamPicker(p, onTeam) {
 }
 
 /**
- * playerList(room, { onRemoveBot?, onAddBot?, onTeam? }): one row per player with
- * their team, then the free seats (where the host can add a practice bot).
+ * playerList(room, { onRemoveBot?, onAddBot?, onTeam?, onGrant? }): one row per player
+ * with their team, then the free seats (where the host can add a practice bot).
+ * onGrant(playerId, on): the host gives or takes a player's power-ups.
  */
-export function playerList(room, { onRemoveBot, onAddBot, onTeam } = {}) {
+export function playerList(room, { onRemoveBot, onAddBot, onTeam, onGrant } = {}) {
   const isHost = room.hostId === room.youId;
   const lobby = room.status === 'lobby';
+  const pu = room.config.powerups ?? {};
+  const powersOn = Object.values(pu).some((n) => n > 0);
   const slots = room.players.map((p) => {
     const tags = [];
     if (p.id === room.hostId) tags.push('host');
@@ -76,6 +79,13 @@ export function playerList(room, { onRemoveBot, onAddBot, onTeam } = {}) {
           !canTeam && p.team ? [tags.length ? ' · ' : '', h(`span.team-word.team-${p.team}`, {}, `${TEAM_LABELS[p.team]} team`)] : null),
         canTeam ? teamPicker(p, onTeam) : null),
       (room.wins[p.id] ?? 0) > 0 ? h('span.player-score', { title: 'Rounds won' }, icon('trophy'), room.wins[p.id]) : null,
+      lobby && powersOn && isHost && onGrant ? h(`button.power-grant${p.powerups ? '.on' : ''}`, {
+        type: 'button',
+        'aria-pressed': String(p.powerups),
+        title: p.powerups ? `${p.name} gets power-ups. Click to leave them without.` : `${p.name} gets no power-ups. Click to give them.`,
+        onclick: () => onGrant(p.id, !p.powerups),
+      }, icon('bolt'), p.powerups ? 'on' : 'off')
+        : lobby && powersOn && !p.powerups ? h('span.power-grant.off.static', { title: 'No power-ups for this player' }, icon('bolt'), 'off') : null,
       lobby ? h(`span.ready-word${p.ready ? '.is-ready' : ''}`, {}, p.ready ? 'ready' : 'not ready') : null,
       p.bot && isHost && onRemoveBot && lobby
         ? h('button.icon-btn', { type: 'button', onclick: () => onRemoveBot(p.id), title: 'Remove the bot', 'aria-label': `Remove ${p.name}` }, icon('close')) : null);
@@ -106,11 +116,11 @@ function teamsLine(room) {
 }
 
 /**
- * renderLobby(root, { room, chatEl, onConfig, onPick, onReady, onStart, onTeam, onAddBot, onRemoveBot, onLeave, onDrawn })
+ * renderLobby(root, { room, chatEl, onConfig, onPick, onReady, onStart, onTeam, onGrant, onAddBot, onRemoveBot, onLeave, onDrawn })
  * The callbacks return a promise of the server's reply. chatEl is placed in the third
  * column on every draw (onDrawn runs after). -> { update(room), cleanup() }
  */
-export function renderLobby(root, { room: initial, chatEl = null, onConfig, onPick, onReady, onStart, onTeam, onAddBot, onRemoveBot, onLeave, onDrawn }) {
+export function renderLobby(root, { room: initial, chatEl = null, onConfig, onPick, onReady, onStart, onTeam, onGrant, onAddBot, onRemoveBot, onLeave, onDrawn }) {
   let room = initial;
   let alive = true; // a reply can arrive after the game screen has replaced this one
   let busy = false;
@@ -274,9 +284,12 @@ export function renderLobby(root, { room: initial, chatEl = null, onConfig, onPi
             onRemoveBot: (id) => run(onRemoveBot(id)),
             onAddBot: (level) => run(onAddBot(level)),
             onTeam: (team, id) => run(onTeam(team, id)),
+            onGrant: (id, on) => run(onGrant(id, on)),
           }),
           teamsLine(room),
-          h('p.muted.small.team-help', {}, 'Pick a colour to play in a team: teammates share one editor and one score.')),
+          h('p.muted.small.team-help', {}, 'Pick a colour to play in a team: teammates share one editor and one score.'),
+          isHost && Object.values(c.powerups ?? {}).some((n) => n > 0)
+            ? h('p.muted.small.team-help', {}, 'Click ', icon('bolt'), ' on / off by a player to choose who gets power-ups.') : null),
 
         h('section.lobby-col.lobby-chat', { 'aria-label': 'Chat' }, chatEl)),
 

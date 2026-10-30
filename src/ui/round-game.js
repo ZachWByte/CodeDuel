@@ -73,7 +73,9 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
     watchPane: h('div.watch-pane', { hidden: true }),
     worth: h('p.worth', {}),
     blackout: h('div.blackout', { hidden: true, role: 'alert' }),
+    serverNote: h('div.notice.server-note', { hidden: true, role: 'alert' }),
   };
+  const serverNotes = new Map(); // questionId -> why the server did not count a submit
   const btn = {
     run: h('button.btn#btn-run', { title: 'Run (Ctrl/⌘ + Enter)', onclick: () => doRun() }, icon('play'), 'Run'),
     tests: h('button.btn#btn-tests', { title: 'Run the visible tests', onclick: () => doTests() }, icon('tests'), 'Run tests'),
@@ -102,12 +104,12 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
     h('div.tool-group.tool-end', {}, btn.reset, btn.finish));
   el.console = h('div.console', {},
     h('div.tabs', {}, tabs.output, tabs.results, h('span.spacer', {}), el.engineNote),
-    el.output, el.results);
+    el.serverNote, el.output, el.results);
   if (watch) {
     setChildren(el.watchPane,
       h('div.watch-head', {},
         h('h2.watch-title', {}, icon('eye'), 'Watching'),
-        h('p.muted.small', {}, 'Their code is scrambled until you solve the question they are on.'),
+        h('p.muted.small', {}, 'Readable on every question you have solved (pick it above their code); scrambled on the others.'),
         h('button.btn.btn-small#btn-watch-back', { type: 'button', onclick: () => setWatching(false) }, icon('back'), 'Back to my code')),
       watch.el);
   }
@@ -226,6 +228,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
     drawEnd();
     drawTabs();
     drawTeamStrip();
+    drawServerNote();
     updateHeader();
     updateButtons();
     updateMeter();
@@ -581,6 +584,13 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
     };
   }
 
+  /** Why the server did not count the last submit of the question on screen, if it did not. */
+  function drawServerNote() {
+    const note = q && stateQ()?.status !== 'solved' ? serverNotes.get(q.id) : null;
+    el.serverNote.hidden = !note;
+    setChildren(el.serverNote, note ? [icon('bug'), h('span', {}, h('strong', {}, 'Not counted by the server: '), note)] : null);
+  }
+
   function drawResults(qid, report, submitted) {
     reports.set(qid, { report, submitted });
     if (q.id !== qid) return;
@@ -616,6 +626,8 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
       const question = q;
       const t0 = performance.now();
       const code = editor.getCode();
+      serverNotes.delete(qid);
+      drawServerNote();
       const report = await submitSolution(question, lang, code);
       if (!alive) return;
       drawResults(qid, report, true);
@@ -674,6 +686,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
     if (c.status !== was.status) {
       drawEnd();
       updateButtons();
+      drawServerNote();
     }
     if (c.reveals.length !== was.reveals.length) {
       drawProblem();
@@ -705,7 +718,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
   // The code itself, for spectators (a team's document is on the server already).
   let sentCode = null;
   const codeTimer = team ? 0 : setInterval(() => {
-    if (!q || !isOpen()) return;
+    if (!q || store.getState().status !== 'playing') return;
     const code = editor.getCode();
     const key = `${q.id}\n${code}`;
     if (key === sentCode) return;
@@ -744,6 +757,13 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
       }
     },
     questionId: () => q?.id ?? null,
+    /** The server did not count a submit of this question, and says why. */
+    serverSaid(questionId, message) {
+      if (!alive) return;
+      serverNotes.set(questionId, message);
+      drawServerNote();
+      if (q?.id === questionId) showTab('results');
+    },
     cleanup() {
       alive = false;
       clearInterval(blackoutTimer);

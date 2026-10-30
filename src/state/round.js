@@ -16,6 +16,9 @@ export const REVEAL_COSTS = [0, 0.1, 0.25, 0.5];
 export const DEFAULT_ROUND = { minutes: 15, partial: false, revealCost: 0 };
 // Duel power-ups: uses per player per round the host may give (0 = off). See server/duel.js.
 // Blackout and wipe hit every opponent at once, so they come in small numbers.
+// Time extensions: what a player may ask for, and how many a round can have.
+export const EXTEND_MINUTES = [2, 5, 10];
+export const MAX_EXTENSIONS = 3;
 export const POWERUP_USES = { blackout: [0, 1, 2, 3], wipe: [0, 1, 2], keyboard: [0, 1, 2, 3], hints: [0, 1, 2, 3, 5] };
 const SPEED_SHARE = 0.5; // the speed bonus at the start of the round
 const PARTIAL_SHARE = 0.5; // every secret test passing, not solved
@@ -198,8 +201,16 @@ export function finish(state, now) {
   return timed.status === 'playing' ? end(timed, 'finished', now) : timed;
 }
 
+/** More time on the clock (everyone agreed to a time extension): { seconds }. */
+export function extend(state, seconds, now) {
+  const timed = tick(state, now);
+  if (timed.status !== 'playing' || !(seconds > 0)) return timed;
+  return { ...timed, endsAt: timed.endsAt + seconds * 1000, durationSec: timed.durationSec + seconds };
+}
+
 export function reduceRound(state, action) {
   switch (action.type) {
+    case 'extend': return extend(state, action.seconds, action.now);
     case 'tick': return tick(state, action.now);
     case 'testRun': return testRun(state, action.result, action.now);
     case 'submitResult': return submitResult(state, action.result, action.now);

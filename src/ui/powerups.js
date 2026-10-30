@@ -148,7 +148,8 @@ export function createPowerups({ onPower, onHint, questionId }) {
 
   function drawButton() {
     const cfg = config();
-    const on = room?.status === 'playing' && usesLeft(cfg) > 0;
+    // Hidden for a player the host left without power-ups.
+    const on = room?.status === 'playing' && usesLeft(cfg) > 0 && me()?.powerups !== false;
     button.hidden = !on;
     if (!on) {
       close();

@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { io as connect } from 'socket.io-client';
 import { attachDuel, validConfig, validPick, audioType } from '../server/duel.js';
 import { createSolutionStore } from '../server/solutions.js';
-import { getQuestion } from '../src/questions/index.js';
+import { getQuestion, BANK_VERSION } from '../src/questions/index.js';
 import { resolveTests, startingCode } from '../src/judge/resolve.js';
 
 const config = { lang: 'py3', difficulty: 'easy', count: 1 };
@@ -28,6 +28,8 @@ async function setup(options = {}) {
     socket.on('duel:chatlog', (log) => { c.chat = [...log]; });
     socket.on('duel:chat', (msg) => { c.chat.push(msg); });
     socket.on('duel:watch', (w) => { c.watch.push(w); });
+    c.verify = [];
+    socket.on('duel:verify', (v) => { c.verify.push(v); });
     c.request = (event, msg) => socket.emitWithAck(event, msg);
     /** Resolves with the first snapshot (including the current one) that matches. */
     c.until = (pred, ms = 5000) => new Promise((resolve, reject) => {
@@ -360,6 +362,151 @@ test('a team is wiped through its shared document', async () => {
     const again = await b.request('team:open', { questionId: qid });
     assert.equal(again.doc, startingCode(getQuestion(qid), 'py3'));
     assert.ok(a.chat.some((m) => m.text.includes("Ada wiped everyone's code (Bob, Cy)")));
+  } finally {
+    await close();
+  }
+});
+
+test('joining or leaving the lobby keeps the others’ votes', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b, code } = await pair(client);
+    await a.request('duel:pick', raceLists);
+    await b.request('duel:pick', { mode: 'bug-hunt', category: 'random' });
+    const c = client();
+    await c.until((r) => r === null);
+    assert.ok((await c.request('duel:join', { code, name: 'Cy' })).ok);
+    const seen = await a.until((r) => r.players.length === 3);
+    assert.deepEqual(seen.pick.votes[me(seen).id], raceLists, 'Ada’s vote is still in');
+    assert.equal(seen.pick.votes[named(seen, 'Bob').id], true, 'Bob’s too');
+    await b.request('duel:leave');
+    const after = await a.until((r) => r.players.length === 2);
+    assert.deepEqual(after.pick.votes[me(after).id], raceLists);
+    assert.equal(Object.keys(after.pick.votes).length, 1, 'only Bob’s vote went');
+  } finally {
+    await close();
+  }
+});
+
+test('a page with another version of the questions is told to reload', async () => {
+  const { client, close } = await setup();
+  try {
+    const a = client();
+    await a.until((r) => r === null);
+    assert.match((await a.request('duel:create', { name: 'Ada', config, bank: 'old' })).error, /out of date/);
+    const { code } = await a.request('duel:create', { name: 'Ada', config, bank: BANK_VERSION });
+    const b = client();
+    await b.until((r) => r === null);
+    assert.match((await b.request('duel:join', { code, name: 'Bob', bank: 'old' })).error, /Reload/);
+  } finally {
+    await close();
+  }
+});
+
+test('a submit the server does not count always says why', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b } = await pair(client);
+    const ra = await startRound(a, b);
+    const qid = firstQ(ra);
+    // Test counts that do not match the server's question (a stale page).
+    a.socket.emit('duel:action', { type: 'submitResult', result: { ...solve(qid), total: 99, passedVisible: 50, passedHidden: 49 }, seq: 1 });
+    await waitFor(() => a.verify.length === 1);
+    assert.equal(a.verify[0].questionId, qid);
+    assert.match(a.verify[0].message, /different version of the question/);
+    a.socket.emit('duel:action', { type: 'submitResult', result: solve(qid), seq: 2 });
+    await a.until((r) => qOf(r, qid).status === 'solved');
+    // Submitting a solved question again.
+    a.socket.emit('duel:action', { type: 'submitResult', result: solve(qid), seq: 3 });
+    await waitFor(() => a.verify.length === 2);
+    assert.match(a.verify[1].message, /already closed/);
+  } finally {
+    await close();
+  }
+});
+
+test('you can read an opponent’s code on every question you solved, even after they moved on', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b, code } = await (async () => {
+      const x = client();
+      const y = client();
+      await x.until((r) => r === null);
+      const { code: c } = await x.request('duel:create', { name: 'Ada', config: { ...config, count: 3 } });
+      await y.request('duel:join', { code: c, name: 'Bob' });
+      await x.until((r) => r?.players.length === 2);
+      return { a: x, b: y, code: c };
+    })();
+    assert.ok(code);
+    const ra = await startRound(a, b);
+    const [q1, q2] = me(ra).state.questions.map((q) => q.id);
+    // Bob pastes and submits Q1 straight away (no duel:code first), then moves to Q2.
+    b.socket.emit('duel:action', { type: 'submitResult', result: solve(q1, '# bob\n' + getQuestion(q1).solution.sicpy), seq: 1 });
+    await b.until((r) => qOf(r, q1).status === 'solved');
+    b.socket.emit('duel:view', { questionId: q2 });
+    await a.until((r) => named(r, 'Bob').viewing === q2);
+    // Ada has not solved Q1: Bob's Q2 is scrambled and nothing else is readable.
+    await waitFor(() => a.watch.some((w) => w.questionId === q2));
+    assert.deepEqual(a.watch.filter((w) => w.questionId === q2).at(-1).others, []);
+    // Ada solves Q1: now Bob's final Q1 code comes along with his (still locked) Q2.
+    a.socket.emit('duel:action', { type: 'submitResult', result: solve(q1), seq: 1 });
+    await waitFor(() => a.watch.at(-1)?.others?.length === 1);
+    const w = a.watch.at(-1);
+    assert.equal(w.questionId, q2);
+    assert.equal(w.locked, true);
+    assert.deepEqual(w.others, [{ questionId: q1, code: '# bob\n' + getQuestion(q1).solution.sicpy }]);
+  } finally {
+    await close();
+  }
+});
+
+test('time extension: everyone has to agree; one no and it is off', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b } = await pair(client);
+    const ra = await startRound(a, b);
+    const endsAt = me(ra).state.endsAt;
+    assert.match((await a.request('duel:extend', { minutes: 7 })).error, /2, 5 or 10/);
+    assert.ok((await a.request('duel:extend', { minutes: 5 })).ok);
+    const asked = await b.until((r) => r.extension);
+    assert.equal(asked.extension.byId, me(ra).id);
+    assert.deepEqual(asked.extension.voters, [me(asked).id]);
+    assert.match((await a.request('duel:extend', { minutes: 2 })).error, /already asked/);
+    assert.match((await a.request('duel:extendVote', { yes: true })).error, /already agreed/);
+    assert.ok((await b.request('duel:extendVote', { yes: true })).ok);
+    const longer = await a.until((r) => !r.extension && me(r).state.endsAt > endsAt);
+    assert.equal(me(longer).state.endsAt - endsAt, 5 * 60 * 1000);
+    assert.equal(me(longer).state.durationSec, 15 * 60 + 5 * 60);
+    assert.equal(named(longer, 'Bob').state.endsAt - endsAt, 5 * 60 * 1000, 'for everyone');
+    assert.equal(longer.extensions, 1);
+
+    // Bob asks, Ada says no: nothing changes, and Bob waits before asking again.
+    assert.ok((await b.request('duel:extend', { minutes: 2 })).ok);
+    await a.until((r) => r.extension);
+    assert.ok((await a.request('duel:extendVote', { yes: false })).ok);
+    const no = await b.until((r) => !r.extension);
+    assert.equal(me(no).state.endsAt - endsAt, 5 * 60 * 1000);
+    assert.match((await b.request('duel:extend', { minutes: 2 })).error, /Wait/);
+    assert.ok(a.chat.some((m) => m.text.includes('Ada said no')));
+  } finally {
+    await close();
+  }
+});
+
+test('the host chooses who gets power-ups', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b } = await pair(client);
+    await a.request('duel:config', { config: { ...config, powerups: { blackout: 1, wipe: 0, keyboard: 0, hints: 2 } } });
+    const bobId = named(a.room, 'Bob').id;
+    assert.match((await b.request('duel:grant', { playerId: me(a.room).id, on: false })).error, /Only the host/);
+    assert.ok((await a.request('duel:grant', { playerId: bobId, on: false })).ok);
+    const lobby = await b.until((r) => me(r).powerups === false);
+    assert.equal(named(lobby, 'Ada').powerups, true);
+    const rb = await startRound(a, b);
+    assert.deepEqual((await b.until((r) => r.powers)).powers, { blackout: 0, wipe: 0, keyboard: 0, hints: 0, blackoutReadyAt: 0 });
+    assert.equal((await a.until((r) => r.powers)).powers.hints, 2);
+    assert.ok(rb);
   } finally {
     await close();
   }

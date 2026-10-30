@@ -160,6 +160,11 @@ per round come from the settings above) and shows a 4-letter code and a link
     conditions, with what it assigns and returns blanked out) or the next 3 lines of a
     solution. In Bug Hunt: which line the bug is on, or the fixed line. They show in the
     problem panel, and teammates share them.
+- **Who gets power-ups:** everyone, unless the host clicks ⚡ on / off by a player in the lobby.
+- **Time extension:** during a round, **+Time** asks everyone for 2, 5 or 10 more minutes.
+  Every other person in the room gets Agree / No (bots agree); if all agree within 30 s,
+  every side still playing gets the time. One no (or silence) and it is off. At most 3 per
+  round, and someone whose ask failed waits a minute before asking again.
 - **Playing:** when everyone is ready (or the host starts) there is a 3-second countdown, then every side gets
   the same questions on the same clock. Under each question's title, "Worth up to N now"
   shows the most it can still score and what wrong submits, test runs, reveals and
@@ -169,10 +174,12 @@ per round come from the settings above) and shows a 4-letter code and a link
   changes), with what each is working on; the header shows your place and the gap.
   Toasts announce other sides' solves.
 - **Watching:** Watch (in the header, or after a solve) turns the work area into a view
-  of the other players' code, following the question each one has open. It is
-  scrambled (same lines and indentation, every character replaced) until your side has
-  solved that question or your round is over; the server never sends the real code
-  before then. On the results screen you can watch the others finish.
+  of the other players' code. You can read their code on every question your side has
+  solved, even after they moved on (tabs on their card pick the question; their final
+  submitted code is kept). On the others it is scrambled (same lines and indentation,
+  every character replaced); the server never sends the real code before you have
+  solved that question or your round is over. On the results screen you can watch the
+  others finish.
 - **Results:** final standings, and every side's score per question. The top side wins
   the round, and each of its players gets a point in the match.
 - **Chat:** open in the lobby and on the results screen. During a round it folds into a

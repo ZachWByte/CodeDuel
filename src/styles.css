@@ -925,3 +925,25 @@ body.chat-side-open .power-toggle > span:not(.icon):not(.power-count) { display:
 .sk-key:active { transform: translateY(1px); border-bottom-width: 1px; }
 .sk-special { font-family: var(--sans); font-size: 12px; font-weight: 650; color: var(--g8); }
 .sk-special.on { background: var(--buff); color: var(--buff-ink); border-color: var(--buff); }
+.server-note { margin: 8px 12px 0; font-size: 13px; }
+.spectate-picker { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 12px; border-bottom: 1px solid var(--g4); background: var(--g2); }
+.spectate-q { font: inherit; font-size: 12px; font-weight: 650; color: var(--g8); background: none; border: 1px solid var(--g4); border-radius: 999px; padding: 2px 10px; cursor: pointer; }
+.spectate-q:hover { color: var(--ink); border-color: var(--g6); }
+.spectate-q.active { background: var(--buff); border-color: var(--buff); color: var(--buff-ink); }
+
+/* ---------- time extension: +Time menu, and the vote at the bottom of the screen */
+.ext-toggle .icon { color: var(--buff); }
+body.chat-side-open .ext-toggle > span:not(.icon) { display: none; }
+.ext-menu { position: fixed; z-index: 59; width: 240px; background: var(--g2); border: 1px solid var(--g5); border-radius: var(--r); padding: 10px 12px; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5); animation: fade 0.12s ease-out; }
+.ext-menu p { margin: 0 0 8px; }
+.ext-options { display: flex; gap: 6px; }
+.ext-prompt { position: fixed; left: 50%; bottom: 72px; transform: translateX(-50%); z-index: 60; display: flex; align-items: center; gap: 12px; max-width: min(640px, 92vw); background: var(--g3); border: 1px solid var(--buff); border-radius: var(--r-lg); padding: 10px 14px; box-shadow: 0 16px 44px rgba(0, 0, 0, 0.55); font-size: 14px; animation: fade 0.2s ease-out; }
+.ext-prompt > .icon { color: var(--buff); width: 20px; height: 20px; flex: none; }
+.ext-text { min-width: 0; }
+.ext-actions { display: flex; gap: 6px; flex: none; }
+.ext-time { font-size: 18px; color: var(--g8); flex: none; }
+.power-grant { display: inline-flex; align-items: center; gap: 3px; flex: none; font: inherit; font-size: 12px; font-weight: 700; color: var(--g7); background: var(--g1); border: 1px solid var(--g4); border-radius: 999px; padding: 2px 8px 2px 6px; cursor: pointer; }
+.power-grant .icon, .power-grant svg { width: 13px; height: 13px; }
+.power-grant.on { color: var(--buff-ink); background: var(--buff); border-color: var(--buff); }
+.power-grant.static { cursor: default; }
+.team-help .icon { width: 12px; height: 12px; vertical-align: -1px; color: var(--buff); }

@@ -46,6 +46,21 @@ export const ALL_QUESTIONS = [
 const byId = new Map(ALL_QUESTIONS.map((q) => [q.id, q]));
 export const getQuestion = (id) => byId.get(id);
 
+/**
+ * A fingerprint of the bank (ids, tests, solutions). A duel needs the browser and
+ * the server to agree on every question, so a page loaded before an update (or
+ * a dev server that was not restarted) is told to reload instead of having its
+ * solves rejected.
+ */
+export const BANK_VERSION = (() => {
+  let h = 2166136261;
+  const add = (s) => {
+    for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
+  };
+  for (const q of ALL_QUESTIONS) add(JSON.stringify([q.id, q.languages, q.tests, q.solution, q.buggy, q.starter, q.banned]));
+  return (h >>> 0).toString(36);
+})();
+
 /** Broad groups of topics, for picking a duel round's theme. */
 export const CATEGORIES = {
   basics: { label: 'Recursion & loops', topics: ['recursion', 'loops', 'conditionals', 'math'] },

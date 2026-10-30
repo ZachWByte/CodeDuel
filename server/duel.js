@@ -23,6 +23,7 @@
 //   duel:start { pick? }          (host, lobby: start now, without waiting for everyone to be ready;
 //                                  pick is the host's vote if they have not cast one)
 //   duel:team { team, playerId? } (lobby: your team, or a bot's if you are the host; null = on your own)
+//   duel:grant { playerId, on }   (host, lobby: whether that player gets power-ups; everyone does by default)
 //   duel:ready { ready }          duel:next (after a round: back to the lobby)
 //   duel:addBot { level }         duel:removeBot { id }   (host, lobby)
 //   duel:action { type, result?, seq }  (round actions testRun / submitResult / reveal / finish)
@@ -31,6 +32,7 @@
 //   duel:power { type: 'blackout' | 'wipe' }   (a power-up on every opponent)
 //   duel:power { type: 'keyboard', targetId }  (mouse keys on one opponent)
 //   duel:hint { questionId, kind: 'outline' | 'lines' } -> { ok, hint }
+//   duel:extend { minutes }       ask everyone for more time;  duel:extendVote { yes }
 //   duel:view { questionId }      (the question you have open, for spectators and teammates)
 //   duel:progress { questionId, lines }  (lines of code in the editor, sent every few seconds at most)
 //   duel:code { questionId, code }       (your code, about once a second while it changes; not in a team)
@@ -75,14 +77,19 @@
 //             by clicking an on-screen one (their browser enforces it).
 //   hint      help on a question of yours: pseudo-code or lines of a solution (server/hints.js).
 //
+// Time extension: during a round a player asks for more minutes; every other person
+// in the room (bots always agree) has EXTEND_VOTE_MS to agree. If all do, every side
+// still playing gets the time; one no (or silence) and it is off. At most
+// MAX_EXTENSIONS per round, and someone whose ask failed waits EXTEND_RETRY_MS.
+//
 // Solves are spot-checked: in Python §3 / §4 a submit that claims to pass every test
 // must include the code, and the server re-runs a few of the tests (server/verify.js).
 // A side's actions are handled one at a time, and its clock waits while code is
 // being checked, so the check never costs time.
 import { Server } from 'socket.io';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { createRound, reduceRound, questionIndex, rankSides, ROUND_MINUTES, REVEAL_COSTS, DEFAULT_ROUND, POWERUP_USES } from '../src/state/round.js';
-import { LANG_LABELS, MODE_LABELS, DIFFICULTY_LABELS, CATEGORIES, filterQuestions, getQuestion } from '../src/questions/index.js';
+import { createRound, reduceRound, questionIndex, rankSides, ROUND_MINUTES, REVEAL_COSTS, DEFAULT_ROUND, POWERUP_USES, EXTEND_MINUTES, MAX_EXTENSIONS } from '../src/state/round.js';
+import { LANG_LABELS, MODE_LABELS, DIFFICULTY_LABELS, CATEGORIES, filterQuestions, getQuestion, BANK_VERSION } from '../src/questions/index.js';
 import { resolveTests, findBanned, linesChanged, startingCode } from '../src/judge/resolve.js';
 import { createVerifier, VERIFY_LANGS } from './verify.js';
 import { ChangeSet } from '@codemirror/state';
@@ -122,6 +129,8 @@ const ACTIONS = ['testRun', 'submitResult', 'reveal', 'finish'];
 export const BLACKOUT_MS = 15 * 1000; // short, as it hits everyone
 export const BLACKOUT_COOLDOWN_MS = 3 * 60 * 1000;
 export const KEYBOARD_MS = 30 * 1000;
+export const EXTEND_VOTE_MS = 30 * 1000;
+const EXTEND_RETRY_MS = 60 * 1000;
 const MODES = Object.keys(MODE_LABELS);
 
 // Stand-ins for the characters of code a spectator may not see yet.
@@ -352,6 +361,9 @@ export function attachDuel(httpServer, {
       lastWinnerId: room.lastWinnerId, // a player on the side that won the last round
       lastWinnerSide: room.lastWinnerSide,
       startsAt: room.startsAt,
+      // A time extension being voted on: { byId, minutes, votes: { playerId: true }, voters, until }.
+      extension: room.extension,
+      extensions: room.extensions ?? 0,
       youId: me.id,
       yourSeq: me.seq, // the last of your actions the server has applied
       // Your power-ups left this round, and the hints your side has (by question).
@@ -373,6 +385,7 @@ export function attachDuel(httpServer, {
           connected: p.socketId !== null,
           left: p.left,
           ready: p.ready,
+          powerups: !p.noPowers, // the host may leave someone without power-ups
           state: side?.state ?? null, // the side's state: teammates share one
           viewing: p.viewing, // the question they have open
           progress: p.progress, // { questionId, lines } for the question they have open
@@ -413,7 +426,7 @@ export function attachDuel(httpServer, {
     return p.viewing && questionIndex(side.state, p.viewing) >= 0 ? p.viewing : side.state.questions[0].id;
   }
 
-  /** p's code for a question: the team's shared document, or what p last sent. -> { text, scrambled } | null */
+  /** p's code for a question: the team's shared document, or what p last sent for it. -> { text, scrambled } | null */
   function codeOf(side, p, questionId) {
     if (side.team) {
       const doc = side.docs.get(questionId);
@@ -425,16 +438,35 @@ export function attachDuel(httpServer, {
       }
       return { text, scrambled: doc.scrambled };
     }
-    return p.code?.questionId === questionId ? p.code : null;
+    return p.codes.get(questionId) ?? null;
   }
 
-  /** What `viewer` sees of `p`'s code: for the question p has open, real or scrambled. */
+  /**
+   * What `viewer` sees of `p`'s code: the question p has open, real or scrambled,
+   * and (in `others`) p's code on every other question the viewer may read.
+   */
   function watchOf(room, viewer, p) {
     const side = sideOf(room, p);
     const questionId = viewingOf(side, p);
     const locked = !canSee(room, viewer, questionId);
     const c = codeOf(side, p, questionId);
-    return { playerId: p.id, questionId, locked, code: c ? (locked ? c.scrambled : c.text) : null };
+    const others = [];
+    for (const { id } of side.state.questions) {
+      if (id === questionId || !canSee(room, viewer, id)) continue;
+      const o = codeOf(side, p, id);
+      if (o) others.push({ questionId: id, code: o.text });
+    }
+    return { playerId: p.id, questionId, locked, code: c ? (locked ? c.scrambled : c.text) : null, others };
+  }
+
+  /** Remembers a player's code for a question (players on their own; teams share a document). */
+  function keepCode(p, questionId, text) {
+    const prev = p.codes.get(questionId);
+    if (prev?.text === text) return false;
+    // A salt per question, so the scramble never lines up across questions.
+    const salt = prev?.salt ?? newSalt();
+    p.codes.set(questionId, { text, salt, scrambled: scramble(text, salt) });
+    return true;
   }
 
   /** Sends every human their opponents' code, when what they would see has changed. */
@@ -449,7 +481,7 @@ export function attachDuel(httpServer, {
         const side = sideOf(room, p);
         if (p === viewer || !side || side === mySide) continue;
         const w = watchOf(room, viewer, p);
-        const key = `${w.questionId}|${w.locked}|${w.code}`;
+        const key = JSON.stringify(w);
         if (viewer.watchSent.get(p.id) === key) continue;
         viewer.watchSent.set(p.id, key);
         io.to(viewer.socketId).emit('duel:watch', w);
@@ -509,6 +541,7 @@ export function attachDuel(httpServer, {
 
   function finishRound(room) {
     room.status = 'finished';
+    room.extension = null;
     room.startsAt = null;
     const ranked = rankSides(liveSides(room));
     const winner = ranked.length && ranked.filter((s) => s.rank === 1).length === 1 ? ranked[0] : null;
@@ -547,7 +580,13 @@ export function attachDuel(httpServer, {
       return;
     }
     if (room.hostId === player.id) room.hostId = humans(room)[0].id;
-    if (room.status === 'lobby') resetPick(room);
+    settleExtension(room);
+    // The others keep their votes; only a missing picker means choosing again.
+    if (room.status === 'lobby') {
+      if (room.pick.pickerId === player.id) resetPick(room);
+      else delete room.pick.votes[player.id];
+      maybeStart(room);
+    }
     updateFinished(room);
     broadcast(room);
   }
@@ -559,7 +598,7 @@ export function attachDuel(httpServer, {
       id: randomUUID().slice(0, 8), token, name: cleanName(name), socketId,
       left: false, seq: 0, ready: false, bot: level, chatTimes: [], voiceTimes: [], awaySince: null,
       actions: Promise.resolve(), team: null, viewing: null, progress: null, progressAt: 0,
-      code: null, codeAt: 0, watchSent: new Map(),
+      codes: new Map(), codeAt: 0, watchSent: new Map(), // codes: questionId -> { text, salt, scrambled }
     };
     room.players.push(player);
     seats.set(token, { room, player });
@@ -634,14 +673,18 @@ export function attachDuel(httpServer, {
     room.sides = makeSides(players, config, questions, room.startsAt);
     const uses = room.config.powerups;
     for (const p of players) {
-      p.code = null;
+      p.codes = new Map();
       p.viewing = null;
       p.progress = null;
       p.watchSent.clear();
-      p.powers = { blackout: uses.blackout, wipe: uses.wipe, keyboard: uses.keyboard, hints: uses.hints, blackoutReadyAt: 0 };
+      const give = (n) => (p.noPowers ? 0 : n);
+      p.powers = { blackout: give(uses.blackout), wipe: give(uses.wipe), keyboard: give(uses.keyboard), hints: give(uses.hints), blackoutReadyAt: 0 };
       p.blackedUntil = 0;
       p.keyboardUntil = 0;
     }
+    room.extension = null;
+    room.extensions = 0;
+    for (const p of players) p.extendRetryAt = 0;
     room.roundInfo = { round: room.round, mode: settled.mode, category: settled.category, choice: decided.choice, note: decided.note };
     room.status = 'playing';
     const teams = room.sides.filter((s) => s.memberIds.length > 1).map((s) => sideName(room, s));
@@ -727,8 +770,7 @@ export function attachDuel(httpServer, {
       return;
     }
     if (target.socketId) io.to(target.socketId).emit('duel:wipe', { questionId, code: start, by });
-    const salt = target.code?.questionId === questionId ? target.code.salt : newSalt();
-    target.code = { questionId, text: start, salt, scrambled: scramble(start, salt) };
+    keepCode(target, questionId, start);
   }
 
   /** Wipes every opponent's code on the question they have open (not solved ones, not bots). */
@@ -752,6 +794,58 @@ export function attachDuel(httpServer, {
     say(room, null, `🧨 ${player.name} wiped everyone's code (${names(hit)}) on the question they had open.`);
     broadcast(room);
     return null;
+  }
+
+  // ---------------------------------------------------------------- time extension
+
+  /** Who has to agree to an extension: every person in the room but the one asking. */
+  const extensionVoters = (room, askerId) => humans(room).filter((p) => p.id !== askerId).map((p) => p.id);
+
+  function askExtension(room, player, minutes) {
+    const now = Date.now();
+    if (room.status !== 'playing' || (room.startsAt && now < room.startsAt)) return { error: 'You can ask for more time during a round.' };
+    if (sideOf(room, player)?.state.status !== 'playing') return { error: 'Your round is over.' };
+    if (!EXTEND_MINUTES.includes(minutes)) return { error: 'Ask for 2, 5 or 10 minutes.' };
+    if (room.extension) return { error: 'Someone already asked for more time. Answer that first.' };
+    if ((room.extensions ?? 0) >= MAX_EXTENSIONS) return { error: `This round already had ${MAX_EXTENSIONS} extensions.` };
+    if (now < (player.extendRetryAt ?? 0)) return { error: `Wait ${Math.ceil((player.extendRetryAt - now) / 1000)} s before asking again.` };
+    room.extension = { byId: player.id, byName: player.name, minutes, votes: { [player.id]: true }, voters: extensionVoters(room, player.id), until: now + EXTEND_VOTE_MS };
+    say(room, null, `⏱ ${player.name} asks for ${minutes} more minutes. Everyone has to agree.`);
+    settleExtension(room);
+    broadcast(room);
+    return null;
+  }
+
+  function voteExtension(room, player, yes) {
+    const ext = room.extension;
+    if (!ext) return { error: 'Nobody is asking for more time.' };
+    if (!ext.voters.includes(player.id)) return { error: 'You already agreed.' };
+    if (!yes) {
+      room.extension = null;
+      const asker = byId(room, ext.byId);
+      if (asker) asker.extendRetryAt = Date.now() + EXTEND_RETRY_MS;
+      say(room, null, `⏱ ${player.name} said no: no extra time.`);
+    } else {
+      ext.votes[player.id] = true;
+      settleExtension(room);
+    }
+    broadcast(room);
+    return null;
+  }
+
+  /** Grants the extension once everyone still in the room has agreed. */
+  function settleExtension(room) {
+    const ext = room.extension;
+    if (!ext) return;
+    const waiting = ext.voters.filter((id) => !ext.votes[id] && byId(room, id) && !byId(room, id).left);
+    if (waiting.length) return;
+    room.extension = null;
+    room.extensions = (room.extensions ?? 0) + 1;
+    const now = Date.now();
+    for (const side of room.sides) {
+      if (side.state.status === 'playing') side.state = reduceRound(side.state, { type: 'extend', seconds: ext.minutes * 60, now });
+    }
+    say(room, null, `⏱ Everyone agreed: ${ext.minutes} more minutes on the clock.`);
   }
 
   /** A hint for the player's side on one of its questions. -> { ok, hint } | { error } */
@@ -798,7 +892,9 @@ export function attachDuel(httpServer, {
     const checked = await verifier.run(lang === 'py4' ? 4 : 3, code, tests);
     if (!checked) return out; // the server is too busy to check: trust the browser
     if (checked.failure === 'memory') return fail('Your code used too much memory when the server re-ran it, so it counts as a wrong submit.');
-    if (checked.failure === 'time') return fail('Your code took too long when the server re-ran it, so it counts as a wrong submit.');
+    // The step limit stops slow code (a 'timeout' result below); running out of wall-clock
+    // time means the server itself is slow, which is not the player's fault.
+    if (checked.failure === 'time') return out;
     const failed = checked.results.filter((r) => r.status !== 'pass');
     if (failed.length === 0) return out;
     const slow = failed.some((r) => r.status === 'timeout');
@@ -818,24 +914,30 @@ export function attachDuel(httpServer, {
     const handled = () => {
       if (Number.isInteger(msg?.seq)) player.seq = msg.seq;
     };
-    const echo = () => {
+    // A submit that does not count always says why (the browser showed it passing).
+    const echo = (why = null) => {
       handled();
       socket.emit('duel:room', snapshot(room, player));
+      if (why && msg?.type === 'submitResult' && typeof msg.result?.questionId === 'string') {
+        socket.emit('duel:verify', { questionId: msg.result.questionId, message: why });
+      }
     };
-    if (room.status !== 'playing' || !side || !ACTIONS.includes(msg?.type) ||
-      (room.startsAt && now < room.startsAt)) return echo();
+    if (room.status !== 'playing' || !side || !ACTIONS.includes(msg?.type)) return echo('The round is over, so this submit did not count.');
+    if (room.startsAt && now < room.startsAt) return echo('The round had not started yet, so this submit did not count.');
     // Blacked out: runs and submits wait until it is over (and count from then).
     if (msg.type !== 'finish' && player.blackedUntil > Date.now()) {
       await new Promise((r) => setTimeout(r, player.blackedUntil - Date.now()).unref?.());
       now = Date.now();
-      if (room.status !== 'playing') return echo();
+      if (room.status !== 'playing') return echo('The round ended while your editor was blacked out.');
     }
     const action = { type: msg.type, now };
     if (msg.type !== 'finish') {
       action.result = cleanResult(msg.type, msg.result, side.state);
-      if (!action.result) return echo();
+      if (!action.result) {
+        log(`[duel] ${room.code} ${player.name}: ${msg.type} rejected (does not match the server's question)`, msg.result?.questionId);
+        return echo('The server could not count this submit: this page has a different version of the question. Reload the page, then submit again.');
+      }
     }
-    const before = side.state;
     if (msg.type === 'submitResult') {
       side.checking += 1; // the clock waits for the check
       let checked;
@@ -845,12 +947,17 @@ export function attachDuel(httpServer, {
         side.checking -= 1;
       }
       // The room may have moved on while the code ran (a leave, the round ending).
-      if (seats.get(token)?.player !== player || !room.sides.includes(side) || side.state !== before) return echo();
+      // Otherwise the submit applies to the side as it is now.
+      if (seats.get(token)?.player !== player || !room.sides.includes(side)) return echo('The round ended while your code was being checked.');
       action.result = checked.result;
       if (checked.message) socket.emit('duel:verify', { questionId: action.result.questionId, message: checked.message });
     }
+    // The submitted code is the latest there is (it may be newer than the last duel:code).
+    if (msg.type === 'submitResult' && !side.team && typeof msg.result.code === 'string' &&
+      msg.result.code.length <= MAX_CODE_CHARS) keepCode(player, action.result.questionId, msg.result.code);
+    const before = side.state;
     const next = reduceRound(side.state, action);
-    if (next === side.state) return echo();
+    if (next === side.state) return echo('That question was already closed (solved, or the time was up), so this submit did not count.');
     side.state = next;
     handled();
     if (msg.type === 'submitResult') {
@@ -913,7 +1020,9 @@ export function attachDuel(httpServer, {
         events = 0;
       }
       events += 1;
-      if (events <= EVENTS_PER_SECOND) next();
+      // Round actions (runs, submits) are never dropped: losing one would leave the
+      // browser and the server disagreeing about a solve.
+      if (events <= EVENTS_PER_SECOND || packet[0] === 'duel:action') next();
     });
 
     // Rejoin the seat this token holds, if any.
@@ -956,7 +1065,12 @@ export function attachDuel(httpServer, {
       return { ok: true, code: room.code };
     };
 
-    handle('duel:create', ({ name, config }) => {
+    // A page with another version of the questions would have its solves rejected.
+    const STALE = 'This page is out of date (the questions were updated). Reload the page, then try again.';
+    const stale = (bank) => bank !== undefined && bank !== BANK_VERSION;
+
+    handle('duel:create', ({ name, config, bank }) => {
+      if (stale(bank)) return { error: STALE };
       const cfg = validConfig(config);
       if (!cfg) return { error: 'Those settings are not valid.' };
       if (rooms.size >= maxRooms) return { error: 'The server is full right now. Try again in a few minutes.' };
@@ -973,7 +1087,8 @@ export function attachDuel(httpServer, {
       return joined(room, player);
     });
 
-    handle('duel:join', ({ code, name }) => {
+    handle('duel:join', ({ code, name, bank }) => {
+      if (stale(bank)) return { error: STALE };
       const room = rooms.get(String(code ?? '').trim().toUpperCase());
       if (!room) return { error: 'No room with that code.' };
       if (mine()?.room === room) return joined(room, mine().player);
@@ -982,7 +1097,7 @@ export function attachDuel(httpServer, {
       leave(token);
       const player = seat(room, token, name, socket.id);
       room.emptySince = null;
-      resetPick(room);
+      // Votes and settings stay: the newcomer just has not voted (or readied) yet.
       return joined(room, player);
     });
 
@@ -1044,6 +1159,16 @@ export function attachDuel(httpServer, {
       return type === 'blackout' ? blackout(s.room, s.player, targets) : wipe(s.room, s.player, targets);
     });
 
+    handle('duel:extend', ({ minutes }) => {
+      const s = mine();
+      return s ? askExtension(s.room, s.player, minutes) : { error: 'You are not in a room.' };
+    });
+
+    handle('duel:extendVote', ({ yes }) => {
+      const s = mine();
+      return s ? voteExtension(s.room, s.player, yes === true) : { error: 'You are not in a room.' };
+    });
+
     handle('duel:hint', ({ questionId, kind }) => {
       const s = mine();
       return s ? useHint(s.room, s.player, questionId, kind) : { error: 'You are not in a room.' };
@@ -1067,6 +1192,19 @@ export function attachDuel(httpServer, {
       return null;
     });
 
+    handle('duel:grant', ({ playerId, on }) => {
+      const s = hostLobby();
+      if (!s) return { error: 'Only the host can choose who gets power-ups, in the lobby.' };
+      const target = typeof playerId === 'string' ? byId(s.room, playerId) : null;
+      if (!target) return { error: 'No such player.' };
+      const noPowers = on === false;
+      if (!!target.noPowers === noPowers) return null;
+      target.noPowers = noPowers;
+      say(s.room, null, `⚡ ${target.name} ${noPowers ? 'gets no power-ups' : 'gets power-ups again'}.`);
+      broadcast(s.room);
+      return null;
+    });
+
     handle('duel:ready', ({ ready }) => {
       const s = mine();
       if (!s || s.room.status !== 'lobby') return { error: 'There is no round to get ready for.' };
@@ -1083,7 +1221,7 @@ export function attachDuel(httpServer, {
       s.room.players = humans(s.room).length ? active(s.room) : [];
       s.room.sides = [];
       for (const p of s.room.players) {
-        p.code = null;
+        p.codes = new Map();
         p.viewing = null;
       }
       resetPick(s.room);
@@ -1181,12 +1319,7 @@ export function attachDuel(httpServer, {
       const now = Date.now();
       if (now - s.player.codeAt < CODE_MIN_MS) return;
       s.player.codeAt = now;
-      const prev = s.player.code;
-      if (prev?.questionId === msg.questionId && prev.text === msg.code) return;
-      // A fresh salt per question, so the scramble never lines up across questions.
-      const salt = prev?.questionId === msg.questionId ? prev.salt : newSalt();
-      s.player.code = { questionId: msg.questionId, text: msg.code, salt, scrambled: scramble(msg.code, salt) };
-      scheduleWatch(s.room);
+      if (keepCode(s.player, msg.questionId, msg.code)) scheduleWatch(s.room);
     }));
 
     // ---------------------------------------------------------------- team editors
@@ -1279,6 +1412,13 @@ export function attachDuel(httpServer, {
     }
     if (room.status !== 'playing') return;
     let changed = false;
+    if (room.extension && now > room.extension.until) {
+      const asker = byId(room, room.extension.byId);
+      if (asker) asker.extendRetryAt = now + EXTEND_RETRY_MS;
+      room.extension = null;
+      say(room, null, '⏱ Not everyone answered in time: no extra time.');
+      changed = true;
+    }
     if (room.startsAt && now >= room.startsAt) {
       room.startsAt = null;
       changed = true;
