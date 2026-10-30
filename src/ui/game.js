@@ -1,30 +1,26 @@
-// Game screen: problem panel, editor, console and test results.
-import { h, setChildren, markdown, formatTime, confirmDialog, toast } from './dom.js';
+// Solo game screen: problem panel, editor, console and test results, one question
+// at a time with a clock per question. Duel rounds use round-game.js.
+import { h, setChildren, formatTime, confirmDialog } from './dom.js';
 import { viewButton, splitter, closePanel } from './view-settings.js';
 import { createEditor, createViewer } from '../editor/editor.js';
-import { getQuestion, LANG_LABELS, LANG_DOCS, MODE_LABELS, DIFFICULTY_LABELS } from '../questions/index.js';
-import { resolveTests, startingCode, linesChanged, LANG_FAMILY } from '../judge/resolve.js';
+import { getQuestion, LANG_LABELS, MODE_LABELS, DIFFICULTY_LABELS } from '../questions/index.js';
+import { startingCode, linesChanged, LANG_FAMILY } from '../judge/resolve.js';
 import { runVisibleTests, submitSolution } from '../judge/judge.js';
-import { run, onEngineStatus, isPythonInterruptible } from '../runners/runner.js';
-import { timeLeftSec, BASE_POINTS, PENALTIES, FREE_TEST_RUNS } from '../state/engine.js';
+import { run } from '../runners/runner.js';
+import { timeLeftSec, scoreBreakdown, BASE_POINTS, PENALTIES, FREE_TEST_RUNS } from '../state/engine.js';
 import { loadDraft, saveDraft, clearDraft, loadBest, saveBestIfBetter } from '../state/storage.js';
+import { icon, brandMark, clockCase } from './icons.js';
+import { markEl } from './annotate.js';
+import { problemView, outputView, resultsView, breakdownRows, watchEngine } from './play-parts.js';
 
 const DRAFT_EVERY_MS = 3000;
-let pythonReloadNoticeShown = false;
-
-/** "function sum_digits(n) {" / "def sum_digits(n):" -> "sum_digits(n)" */
-function signatureOf(q, code) {
-  const re = new RegExp(`(?:function|def)\\s+(${q.functionName}\\s*\\([^)]*\\))`);
-  return code.match(re)?.[1] ?? `${q.functionName}(…)`;
-}
 
 /**
- * renderGame(root, { store, resumed, onFinished, onQuit, headerExtra?, quitMessage? })
+ * renderGame(root, { store, resumed, onFinished, onQuit })
  * store: { getState(), dispatch(action), subscribe(fn) -> unsubscribe }
- * headerExtra: optional element shown in the header (the duel opponent bar)
  */
-export function renderGame(root, { store, resumed, onFinished, onQuit, headerExtra = null,
-  quitMessage = 'Leave this session? Your progress in it will be lost.' }) {
+export function renderGame(root, { store, resumed, onFinished, onQuit }) {
+  const quitMessage = 'Leave this session? Your progress in it will be lost.';
   const { lang, mode, difficulty } = store.getState().config;
   const fam = LANG_FAMILY[lang];
   let q = null;
@@ -38,9 +34,10 @@ export function renderGame(root, { store, resumed, onFinished, onQuit, headerExt
 
   // ---------------------------------------------------------------- skeleton
   const el = {
-    qcount: h('span.hdr-q', {}),
-    timer: h('span.hdr-timer', {}),
-    score: h('span.hdr-score', {}),
+    qcount: h('span.numeral.hdr-q', {}),
+    timer: h('span.numeral.hdr-timer', {}),
+    score: h('span.numeral.hdr-score', {}),
+    sheet: h('footer.scoresheet', { 'aria-label': 'Scoresheet' }),
     problem: h('div.problem-body', {}),
     endCard: h('div.end-card-host', {}),
     editorHost: h('div.editor-host', {}),
@@ -53,11 +50,11 @@ export function renderGame(root, { store, resumed, onFinished, onQuit, headerExt
   };
 
   const btn = {
-    run: h('button.btn#btn-run', { title: 'Run (Ctrl/⌘ + Enter)', onclick: () => doRun() }, '▶ Run'),
-    tests: h('button.btn#btn-tests', { title: 'Run the visible tests', onclick: () => doTests() }, '✓ Run tests'),
+    run: h('button.btn#btn-run', { title: 'Run (Ctrl/⌘ + Enter)', onclick: () => doRun() }, icon('play'), 'Run'),
+    tests: h('button.btn#btn-tests', { title: 'Run the visible tests', onclick: () => doTests() }, icon('tests'), 'Run tests'),
     submit: h('button.btn.btn-primary#btn-submit', { title: 'Submit (Ctrl/⌘ + Shift + Enter)', onclick: () => doSubmit() }, 'Submit'),
-    reset: h('button.btn.btn-ghost#btn-reset', { onclick: () => doReset() }, 'Reset'),
-    skip: h('button.btn.btn-ghost#btn-skip', { onclick: () => doSkip() }, 'Skip'),
+    reset: h('button.btn.btn-ghost#btn-reset', { onclick: () => doReset() }, icon('reset'), 'Reset'),
+    skip: h('button.btn.btn-ghost#btn-skip', { onclick: () => doSkip() }, icon('skip'), 'Skip'),
   };
 
   const tabs = {
@@ -71,14 +68,21 @@ export function renderGame(root, { store, resumed, onFinished, onQuit, headerExt
     el.results.hidden = name !== 'results';
   }
 
+  el.clock = clockCase([
+    ['question', el.qcount, { className: '.face-q' }],
+    ['clock', el.timer, { lit: true, flag: true }],
+    ['score', el.score],
+  ]);
   setChildren(root, h('div.game', {},
     h('header.game-header', {},
       h('div.hdr-left', {},
-        h('button.btn.btn-ghost.btn-small#btn-quit', { onclick: () => doQuit() }, '← Home'),
+        h('button.btn.btn-ghost.btn-small#btn-quit', { onclick: () => doQuit() }, icon('back'), 'Home'),
+        h('span.brand', {}, brandMark()),
         h('span.hdr-title', {}, `${MODE_LABELS[mode]} · ${DIFFICULTY_LABELS[difficulty]} · ${LANG_LABELS[lang]}`)),
-      el.qcount,
-      h('div.hdr-right', {}, headerExtra, el.timer, el.score, viewButton())),
-    el.main));
+      el.clock,
+      h('div.hdr-right', {}, viewButton())),
+    el.main,
+    el.sheet));
   // The editor side and widths come from the view settings (CSS variables).
   el.main.append(
     h('section.panel.problem', {}, el.endCard, el.problem),
@@ -86,7 +90,9 @@ export function renderGame(root, { store, resumed, onFinished, onQuit, headerExt
     h('section.panel.work', {},
       el.editorHost,
       h('div.toolbar', {},
-        btn.run, btn.tests, btn.submit, el.meter, h('span.spacer', {}), el.status, btn.reset, btn.skip),
+        h('div.tool-group', {}, btn.run, btn.tests, btn.submit),
+        el.meter, h('span.spacer', {}), el.status,
+        h('div.tool-group.tool-end', {}, btn.reset, btn.skip)),
       h('div.console', {},
         h('div.tabs', {}, tabs.output, tabs.results, h('span.spacer', {}), el.engineNote),
         el.output, el.results)));
@@ -103,19 +109,7 @@ export function renderGame(root, { store, resumed, onFinished, onQuit, headerExt
     },
   });
 
-  // ---------------------------------------------------------------- engine status
-  const offEngine = onEngineStatus(({ engine, state, message }) => {
-    if ((engine === 'python') !== (lang === 'python')) return;
-    if (state === 'loading') el.engineNote.textContent = engine === 'python' ? 'Loading Python…' : 'Loading Python §…';
-    else if (state === 'reloading') {
-      el.engineNote.textContent = 'Python is reloading…';
-      if (!pythonReloadNoticeShown && !isPythonInterruptible()) {
-        pythonReloadNoticeShown = true;
-        toast('Python is reloading… (this browser cannot interrupt Python, so the worker was restarted)');
-      }
-    } else if (state === 'failed') el.engineNote.textContent = `⚠ ${message ?? 'Engine failed to load'}`;
-    else el.engineNote.textContent = '';
-  });
+  const offEngine = watchEngine(lang, el.engineNote);
 
   // ---------------------------------------------------------------- question
   function mountQuestion(fresh) {
@@ -153,68 +147,75 @@ export function renderGame(root, { store, resumed, onFinished, onQuit, headerExt
     const freeLeft = Math.max(0, FREE_TEST_RUNS - c.testRuns);
     const parts = [h(`span.meter-item${freeLeft ? '' : '.warn'}`, {
       title: `Each "Run tests" after the first ${FREE_TEST_RUNS} costs ${runCost} points`,
-    }, `✓ ${c.testRuns} test run${c.testRuns === 1 ? '' : 's'}`, freeLeft ? h('span.muted', {}, ` · ${freeLeft} free`) : h('span', {}, ` · −${runCost} each`))];
+    }, icon('tests'), h('span', {}, h('b', {}, c.testRuns), h('span.long', {}, ` test run${c.testRuns === 1 ? '' : 's'}`), h('span.short', {}, ` run${c.testRuns === 1 ? '' : 's'}`)),
+    freeLeft ? h('span.muted', {}, `· ${freeLeft} free`) : h('span.cost-each', {}, `· −${runCost} each`))];
     if (c.par !== null) {
       const n = editedLines();
       const lineCost = Math.round(base * PENALTIES.extraLine);
       parts.push(h(`span.meter-item${n > c.par ? '.over' : ''}`, {
         title: `Par is ${c.par} line${c.par === 1 ? '' : 's'}; each extra changed line costs ${lineCost} points`,
-      }, `✎ ${n}/${c.par} line${c.par === 1 ? '' : 's'}`, n > c.par ? ` · −${(n - c.par) * lineCost}` : ''));
+      }, icon('pencil'), h('span', {}, h('b', {}, n), `/${c.par}`, h('span.long', {}, ` line${c.par === 1 ? '' : 's'} changed`)), n > c.par ? h('span', {}, `· −${(n - c.par) * lineCost}`) : null));
     }
     setChildren(el.meter, parts);
+    updateRules();
   }
 
   function drawProblem() {
     const state = store.getState();
-    const tests = resolveTests(q, lang);
-    const visible = tests.filter((t) => !t.hidden);
-    const hiddenCount = tests.length - visible.length;
     const best = loadBest(q.id, lang);
-    setChildren(el.problem, 
-      h('div.problem-head', {},
-        h('h2', {}, q.title),
-        h('div.meta', {},
-          h('span.qid', {}, q.id),
-          h(`span.diff.diff-${q.difficulty}`, {}, DIFFICULTY_LABELS[q.difficulty]),
-          h('span.tag', {}, q.topic),
-          h('span.muted', {}, `⏱ ${formatTime(state.current.timeLimitSec)}`))),
-      q.mode === 'bug-hunt'
-        ? h('div.notice', {}, '🐞 This code has a bug. Fix it so all tests pass.')
-        : null,
-      h('div.description', { html: markdown(q.description) }),
-      LANG_DOCS[lang]
-        ? h('p.lang-note', {},
-          `${LANG_LABELS[lang]}: lists are linked lists built with `, h('code', {}, 'pair'), ' / ', h('code', {}, 'llist'),
-          ' (', h('code', {}, 'None'), ' is the empty list); ', h('code', {}, '[...]'), ' is an array. ',
-          h('a', { href: LANG_DOCS[lang], target: '_blank', rel: 'noopener' }, 'Language reference ↗'))
-        : null,
-      h('div.signature', {}, h('span.muted', {}, 'Signature '), h('code', {}, signatureOf(q, startingCode(q, lang)))),
-      h('h3', {}, 'Examples'),
-      h('ul.examples', {}, visible.map((t) => h('li', {},
-        t.setup ? h('pre.setup', {}, t.setup) : null,
-        h('code', {}, t.call), h('span.arrow', {}, ' → '), h('code', {}, t.expect),
-        t.note ? h('span.note', {}, `  · ${t.note}`) : null))),
-      h('p.muted.small', {}, `+ ${hiddenCount} secret test${hiddenCount === 1 ? '' : 's'} on Submit.`),
+    live.worth = h('p.worth', {});
+    setChildren(el.problem,
+      ...problemView(q, lang, { timeSec: state.current.timeLimitSec, extra: live.worth }),
       scoringNote(state.current),
-      best ? h('p.muted.small', {}, `Your best: ${best.points} points in ${formatTime(best.timeSec)}`) : null,
-    );
+      best ? h('p.your-best', {}, `Your best: ${best.points} points in ${formatTime(best.timeSec)}`) : null);
   }
 
+  /** Scoring rules, each beside its live number; updateRules() keeps the numbers current. */
+  const live = {};
   function scoringNote(c) {
+    Object.keys(live).forEach((k) => { if (k !== 'worth') delete live[k]; });
     const base = BASE_POINTS[c.difficulty];
     const cost = (share) => Math.round(base * share);
-    return h('p.scoring-note', {},
-      h('strong', {}, 'Scoring: '), `${base} points + up to ${base / 2} for speed. `,
-      `−${cost(PENALTIES.failedSubmit)} per wrong Submit, −${cost(PENALTIES.testRun)} per Run tests after the first`,
-      c.par !== null ? `, −${cost(PENALTIES.extraLine)} per line changed beyond par (${c.par}).` : '.');
+    const row = (key, label, rule) => {
+      live[key] = h('dd', {});
+      return [h('dt', {}, label, h('span.rule', {}, rule)), live[key]];
+    };
+    const free = FREE_TEST_RUNS === 1 ? 'first free' : `first ${FREE_TEST_RUNS} free`;
+    return h('dl.rules.rules-live', { 'aria-label': 'Scoring' },
+      row('base', `Solve · ${DIFFICULTY_LABELS[c.difficulty]}`, ''),
+      row('speed', 'Speed bonus', `up to +${base / 2}, falls as the clock runs`),
+      row('runs', 'Run tests', `${free}, then −${cost(PENALTIES.testRun)} each`),
+      row('submits', 'Wrong submits', `−${cost(PENALTIES.failedSubmit)} each`),
+      c.par !== null ? row('lines', 'Lines changed', `par ${c.par}, then −${cost(PENALTIES.extraLine)} each`) : null,
+      h('dt.rules-total', {}, 'If you solve it now'), (live.total = h('dd.rules-total', {})));
   }
 
-  function breakdownText(b) {
-    const parts = [`${b.base} base`, `+${b.timeBonus} speed`];
-    if (b.submitPenalty) parts.push(`−${b.submitPenalty} wrong submits`);
-    if (b.testPenalty) parts.push(`−${b.testPenalty} test runs`);
-    if (b.editPenalty) parts.push(`−${b.editPenalty} extra edits`);
-    return parts.join(' ');
+  function updateRules() {
+    const state = store.getState();
+    const c = state.current;
+    if (c.status !== 'playing' || !live.total) return;
+    const left = Math.min(c.timeLimitSec, timeLeftSec(state, Date.now()));
+    const edited = c.par !== null ? editedLines() : 0;
+    const b = scoreBreakdown({
+      difficulty: c.difficulty, solved: true, timeLeftSec: left, timeLimitSec: c.timeLimitSec,
+      failedSubmits: c.failedSubmits, testRuns: c.testRuns, extraLines: Math.max(0, edited - (c.par ?? 0)),
+    });
+    const set = (key, text, kind = '') => {
+      if (!live[key]) return;
+      if (live[key].textContent !== text) live[key].textContent = text;
+      live[key].className = kind;
+    };
+    set('base', String(b.base));
+    set('speed', `now +${b.timeBonus}`, 'gain');
+    set('runs', `${c.testRuns} used${b.testPenalty ? ` · −${b.testPenalty}` : ''}`, b.testPenalty ? 'cost' : '');
+    set('submits', c.failedSubmits ? `${c.failedSubmits} · −${b.submitPenalty}` : '0', b.submitPenalty ? 'cost' : '');
+    set('lines', `${edited}/${c.par}${b.editPenalty ? ` · −${b.editPenalty}` : ''}`, b.editPenalty ? 'cost' : '');
+    set('total', String(b.points), 'rules-total');
+    const lost = b.submitPenalty + b.testPenalty + b.editPenalty;
+    if (live.worth) {
+      setChildren(live.worth, 'Worth up to ', h('strong', {}, b.points), ' now',
+        lost ? h('span.cost', {}, ` · −${lost} lost`) : null);
+    }
   }
 
   function drawEnd() {
@@ -225,17 +226,20 @@ export function renderGame(root, { store, resumed, onFinished, onQuit, headerExt
       return;
     }
     const last = state.index === state.questions.length - 1;
-    const nextBtn = h('button.btn.btn-primary#btn-next', { onclick: () => doNext() }, last ? 'See results ▸' : 'Next ▸');
+    const nextBtn = h('button.btn.btn-primary#btn-next', { onclick: () => doNext() }, last ? 'See results' : 'Next', icon('chevron'));
     const timeTaken = Math.round((c.endedAt - c.startedAt) / 1000);
     const parts = [];
 
     if (c.status === 'solved') {
-      parts.push(h('div.end-title.ok', {}, '✓ Solved!'),
-        h('div.end-stats', {},
-          h('span', {}, `Time ${formatTime(timeTaken)}`),
-          h('span', {}, `Attempts ${c.attempts}`),
-          h('span.points', {}, `+${c.points} points`)),
-        c.breakdown ? h('div.muted.small', {}, breakdownText(c.breakdown)) : null);
+      parts.push(h('div.end-head', {},
+        markEl({ solved: true, breakdown: c.breakdown }),
+        h('div', {},
+          h('div.end-title.ok', {}, 'Solved'),
+          h('div.end-stats', {},
+            h('span', {}, `Time ${formatTime(timeTaken)}`),
+            h('span', {}, `Attempts ${c.attempts}`))),
+        h('div.end-points', {}, h('span.label', {}, 'points'), h('div.numeral.points', {}, `+${c.points}`))),
+        c.breakdown ? breakdownRows(c.breakdown) : null);
       if (q.mode === 'bug-hunt') {
         const original = startingCode(q, lang);
         parts.push(
@@ -248,8 +252,12 @@ export function renderGame(root, { store, resumed, onFinished, onQuit, headerExt
         queueMicrotask(() => viewers.push(createViewer(host, { doc: original, lang, highlightLines: q.bugLines?.[fam] ?? [] })));
       }
     } else {
-      parts.push(h('div.end-title.bad', {}, c.status === 'timeout' ? '⏱ Time is up' : 'Skipped'),
-        h('div.end-stats', {}, h('span', {}, 'Not solved · 0 points')));
+      parts.push(h('div.end-head', {},
+        markEl({ solved: false }),
+        h('div', {},
+          h('div.end-title.bad', {}, c.status === 'timeout' ? 'Time is up' : 'Skipped'),
+          h('div.end-sub', {}, 'Not solved')),
+        h('div.end-points', {}, h('span.label', {}, 'points'), h('div.numeral', {}, '0'))));
       if (q.mode === 'bug-hunt') parts.push(h('p.bug-explanation', {}, h('strong', {}, 'The bug: '), q.bugExplanation));
     }
 
@@ -274,12 +282,32 @@ export function renderGame(root, { store, resumed, onFinished, onQuit, headerExt
   function updateHeader() {
     const state = store.getState();
     const now = Date.now();
-    el.qcount.textContent = `Q ${state.index + 1}/${state.questions.length}`;
+    el.qcount.textContent = `${state.index + 1}/${state.questions.length}`;
     // Before a duel round starts (countdown) the time left is more than the limit.
     const left = Math.min(state.current.timeLimitSec, timeLeftSec(state, now));
-    el.timer.textContent = `⏱ ${formatTime(left)}`;
-    el.timer.classList.toggle('low', state.current.status === 'playing' && left <= 30);
-    el.score.textContent = `Score ${state.total}`;
+    el.timer.textContent = formatTime(left);
+    el.clock.classList.toggle('clock-low', state.current.status === 'playing' && left <= 30);
+    el.clock.classList.toggle('clock-fallen', state.current.status === 'timeout');
+    el.score.textContent = String(state.total);
+    drawSheet(state);
+    updateRules();
+  }
+
+  /** The scoresheet strip: one move per question, annotated once it ends. */
+  let sheetKey = '';
+  function drawSheet(state) {
+    const key = `${state.index}:${state.current.status}:${state.results.length}`;
+    if (key === sheetKey) return;
+    sheetKey = key;
+    const moves = state.questions.map((meta, i) => {
+      const r = state.results[i];
+      const n = h('span.n', {}, `${i + 1}.`);
+      if (r) return h('span.move', {}, n, h('span.qid', {}, meta.id), markEl(r), h('span.pts', {}, `${r.points}`));
+      if (i === state.index) return h('span.move.move-now', { 'aria-current': 'step' }, n, h('span.qid', {}, meta.id), h('span.pending', {}, 'playing'));
+      return h('span.move.move-todo', {}, n, h('span.qid', {}, '···'));
+    });
+    setChildren(el.sheet, h('span.label', {}, 'Scoresheet'), moves);
+    el.sheet.querySelector('.move-now')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
   }
 
   function updateButtons() {
@@ -321,44 +349,12 @@ export function renderGame(root, { store, resumed, onFinished, onQuit, headerExt
       const r = await run(lang, code);
       if (!alive || q.id !== qid) return;
       showTab('output');
-      setChildren(el.output, 
-        ...r.output.map((line) => h('div.out-line', {}, line)),
-        r.value !== undefined ? h('div.out-value', {}, `→ ${r.value}`) : null,
-        r.status === 'timeout' ? h('div.out-error', {}, `⏱ ${r.error?.startsWith('Time limit') ? r.error : `Time limit exceeded${r.error ? ` (${r.error})` : ''}`}`) : null,
-        r.status === 'error' ? h('div.out-error', {}, r.error) : null,
-        r.output.length === 0 && r.value === undefined && r.status === 'ok' ? h('div.muted', {}, '(no output)') : null,
-        h('div.out-meta', {}, `${r.status === 'ok' ? 'Finished' : 'Stopped'} in ${r.ms} ms`));
+      setChildren(el.output, ...outputView(r));
     });
   }
 
   function drawResults(report, { submitted }) {
-    const visible = report.results.filter((r) => !r.hidden);
-    const hidden = report.results.filter((r) => r.hidden);
-    const label = { pass: '✓ Passed', fail: '✗ Wrong answer', error: '✗ Error', timeout: '✗ Time limit exceeded' };
-    const rows = [];
-    if (report.banned) rows.push(h('div.out-error', {}, `You can't use ${report.banned} in this question`));
-    visible.forEach((r, i) => {
-      rows.push(h(`div.test-row.${r.status === 'pass' ? 'pass' : 'fail'}`, {},
-        h('div.test-head', {}, h('span.mark', {}, r.status === 'pass' ? '✓' : '✗'), ` Test ${i + 1}`, r.note ? h('span.note', {}, ` · ${r.note}`) : null,
-          r.status === 'timeout' ? h('span.note', {}, ' · time limit exceeded') : null),
-        h('div.test-grid', {},
-          h('span.k', {}, 'call'), h('code', {}, r.call),
-          h('span.k', {}, 'expected'), h('code', {}, r.expectText),
-          r.got !== undefined ? [h('span.k', {}, 'got'), h('code', {}, r.got)] : null,
-          r.error ? [h('span.k', {}, 'error'), h('code.err', {}, r.error)] : null)));
-    });
-    hidden.forEach((r, i) => {
-      rows.push(h(`div.test-row.secret.${r.status === 'pass' ? 'pass' : 'fail'}`, {},
-        `Secret test ${i + 1}: ${label[r.status] ?? '✗'}`));
-    });
-    const summary = submitted
-      ? `Visible ${report.passedVisible}/${report.totalVisible} · Secret ${report.passedHidden}/${report.totalHidden}`
-      : `Visible ${report.passedVisible}/${report.totalVisible}`;
-    const allPass = submitted ? report.solved : report.passedVisible === report.totalVisible;
-    setChildren(el.results, 
-      h(`div.results-summary.${allPass ? 'pass' : 'fail'}`, {}, summary,
-        submitted ? (report.solved ? ' — all tests pass!' : ' — not yet') : ''),
-      ...rows);
+    setChildren(el.results, ...resultsView(report, { submitted }));
     showTab('results');
   }
 
@@ -397,6 +393,7 @@ export function renderGame(root, { store, resumed, onFinished, onQuit, headerExt
           total: report.total,
           timeMs: Math.round(performance.now() - t0),
           linesChanged: q.mode === 'bug-hunt' ? linesChanged(startingCode(q, lang), code) : undefined,
+          code, // a duel server re-runs a few tests of claimed solves
         },
       });
     });
@@ -458,6 +455,7 @@ export function renderGame(root, { store, resumed, onFinished, onQuit, headerExt
     updateHeader();
   }, 250);
   const draftTimer = setInterval(saveDraftNow, DRAFT_EVERY_MS);
+
   const onUnload = () => saveDraftNow();
   window.addEventListener('beforeunload', onUnload);
 

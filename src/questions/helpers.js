@@ -84,3 +84,28 @@ export const PY4 = ['py4'];
 export const stub = (sig) => `def ${sig}:\n    # your code here\n    return None`;
 /** Starter stubs: the same Python header in both families. */
 export const stubs = (sig) => ({ sicpy: stub(sig), python: stub(sig) });
+
+/**
+ * The solution with each [right, wrong] piece of text swapped (each `right` must
+ * occur once), and the 1-based lines of the result that the swaps touched.
+ */
+export function breakCode(code, swaps) {
+  let buggy = code;
+  for (const [right, wrong] of swaps) {
+    const at = buggy.indexOf(right);
+    if (at < 0 || buggy.indexOf(right, at + 1) >= 0) throw new Error(`"${right}" must occur exactly once`);
+    buggy = buggy.slice(0, at) + wrong + buggy.slice(at + right.length);
+  }
+  const a = buggy.split('\n');
+  const b = code.split('\n');
+  let lines;
+  if (a.length === b.length) {
+    lines = a.map((l, i) => (l !== b[i] ? i + 1 : 0)).filter(Boolean);
+  } else {
+    // One swap that adds or removes lines: mark the lines it covers in the buggy code.
+    const [right, wrong] = swaps[0];
+    const first = code.slice(0, code.indexOf(right)).split('\n').length;
+    lines = Array.from({ length: wrong.split('\n').length }, (_, i) => first + i);
+  }
+  return { buggy, lines };
+}

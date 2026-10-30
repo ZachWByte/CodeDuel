@@ -1,0 +1,152 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/assigned.html"
+        ],
+        "createdAt": "2026-10-29T02:35:30.672Z",
+        "reason": "Claude triage: decision-round sketch under .impeccable/mocks, rendered only as a skeleton on the decision page, never shipped"
+      },
+      {
+        "rule": "skipped-heading",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/assigned.html"
+        ],
+        "createdAt": "2026-10-29T02:35:30.688Z",
+        "reason": "Claude triage: decision-round sketch under .impeccable/mocks, rendered only as a skeleton on the decision page, never shipped"
+      },
+      {
+        "rule": "low-contrast",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/assigned.html"
+        ],
+        "createdAt": "2026-10-29T02:35:30.704Z",
+        "reason": "Claude triage: decision-round sketch under .impeccable/mocks, rendered only as a skeleton on the decision page, never shipped"
+      },
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/model-pick.html"
+        ],
+        "createdAt": "2026-10-29T02:35:30.718Z",
+        "reason": "Claude triage: decision-round sketch under .impeccable/mocks, rendered only as a skeleton on the decision page, never shipped"
+      },
+      {
+        "rule": "skipped-heading",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/model-pick.html"
+        ],
+        "createdAt": "2026-10-29T02:35:30.733Z",
+        "reason": "Claude triage: decision-round sketch under .impeccable/mocks, rendered only as a skeleton on the decision page, never shipped"
+      },
+      {
+        "rule": "low-contrast",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/model-pick.html"
+        ],
+        "createdAt": "2026-10-29T02:35:30.747Z",
+        "reason": "Claude triage: decision-round sketch under .impeccable/mocks, rendered only as a skeleton on the decision page, never shipped"
+      },
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/challenger-crouwel.html"
+        ],
+        "createdAt": "2026-10-29T02:35:30.762Z",
+        "reason": "Claude triage: decision-round sketch under .impeccable/mocks, rendered only as a skeleton on the decision page, never shipped"
+      },
+      {
+        "rule": "skipped-heading",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/challenger-crouwel.html"
+        ],
+        "createdAt": "2026-10-29T02:35:30.777Z",
+        "reason": "Claude triage: decision-round sketch under .impeccable/mocks, rendered only as a skeleton on the decision page, never shipped"
+      },
+      {
+        "rule": "low-contrast",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/challenger-crouwel.html"
+        ],
+        "createdAt": "2026-10-29T02:35:30.792Z",
+        "reason": "Claude triage: decision-round sketch under .impeccable/mocks, rendered only as a skeleton on the decision page, never shipped"
+      },
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/canon.html"
+        ],
+        "createdAt": "2026-10-29T02:35:30.806Z",
+        "reason": "Claude triage: decision-round sketch under .impeccable/mocks, rendered only as a skeleton on the decision page, never shipped"
+      },
+      {
+        "rule": "skipped-heading",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/canon.html"
+        ],
+        "createdAt": "2026-10-29T02:35:30.821Z",
+        "reason": "Claude triage: decision-round sketch under .impeccable/mocks, rendered only as a skeleton on the decision page, never shipped"
+      },
+      {
+        "rule": "low-contrast",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/canon.html"
+        ],
+        "createdAt": "2026-10-29T02:35:30.835Z",
+        "reason": "Claude triage: decision-round sketch under .impeccable/mocks, rendered only as a skeleton on the decision page, never shipped"
+      },
+      {
+        "rule": "design-system-font",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/assigned.html"
+        ],
+        "createdAt": "2026-10-29T03:10:21.787Z",
+        "reason": "Claude triage: decision-round sketch under .impeccable/mocks (alternate worlds with their own fonts), never shipped"
+      },
+      {
+        "rule": "design-system-font",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/model-pick.html"
+        ],
+        "createdAt": "2026-10-29T03:10:21.803Z",
+        "reason": "Claude triage: decision-round sketch under .impeccable/mocks (alternate worlds with their own fonts), never shipped"
+      },
+      {
+        "rule": "design-system-font",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/challenger-crouwel.html"
+        ],
+        "createdAt": "2026-10-29T03:10:21.818Z",
+        "reason": "Claude triage: decision-round sketch under .impeccable/mocks (alternate worlds with their own fonts), never shipped"
+      },
+      {
+        "rule": "design-system-font",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/decision/canon.html"
+        ],
+        "createdAt": "2026-10-29T03:10:21.832Z",
+        "reason": "Claude triage: decision-round sketch under .impeccable/mocks (alternate worlds with their own fonts), never shipped"
+      }
+    ]
+  }
+}

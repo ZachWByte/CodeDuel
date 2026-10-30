@@ -189,16 +189,16 @@ function countChecks() {
   if (prefixes.length) return;
   const count = (pred) => ALL_QUESTIONS.filter(pred).length;
   const want = [
-    ['total', () => true, 275],
-    ['code-race easy', (q) => q.mode === 'code-race' && q.difficulty === 'easy', 60],
-    ['code-race medium', (q) => q.mode === 'code-race' && q.difficulty === 'medium', 62],
-    ['code-race hard', (q) => q.mode === 'code-race' && q.difficulty === 'hard', 51],
-    ['bug-hunt easy', (q) => q.mode === 'bug-hunt' && q.difficulty === 'easy', 33],
-    ['bug-hunt medium', (q) => q.mode === 'bug-hunt' && q.difficulty === 'medium', 38],
-    ['bug-hunt hard', (q) => q.mode === 'bug-hunt' && q.difficulty === 'hard', 31],
-    ['py4', (q) => q.languages.includes('py4'), 275],
-    ['py3', (q) => q.languages.includes('py3'), 270],
-    ['python', (q) => q.languages.includes('python'), 265],
+    ['total', () => true, 542],
+    ['code-race easy', (q) => q.mode === 'code-race' && q.difficulty === 'easy', 184],
+    ['code-race medium', (q) => q.mode === 'code-race' && q.difficulty === 'medium', 71],
+    ['code-race hard', (q) => q.mode === 'code-race' && q.difficulty === 'hard', 56],
+    ['bug-hunt easy', (q) => q.mode === 'bug-hunt' && q.difficulty === 'easy', 149],
+    ['bug-hunt medium', (q) => q.mode === 'bug-hunt' && q.difficulty === 'medium', 46],
+    ['bug-hunt hard', (q) => q.mode === 'bug-hunt' && q.difficulty === 'hard', 36],
+    ['py4', (q) => q.languages.includes('py4'), 542],
+    ['py3', (q) => q.languages.includes('py3'), 537],
+    ['python', (q) => q.languages.includes('python'), 532],
   ];
   for (const [name, pred, n] of want) {
     const got = count(pred);

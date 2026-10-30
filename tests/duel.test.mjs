@@ -12,19 +12,20 @@ const raceLists = { mode: 'code-race', category: 'lists' };
 
 async function setup(options = {}) {
   const http = createServer();
-  const duel = attachDuel(http, { log: () => {}, countdownMs: 0, ...options });
+  const duel = attachDuel(http, { log: process.env.DUEL_LOG ? console.log : () => {}, countdownMs: 0, ...options });
   await new Promise((r) => http.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${http.address().port}`;
   const clients = [];
   const client = (token = randomUUID()) => {
     const socket = connect(url, { auth: { token }, transports: ['websocket'], forceNew: true });
-    const c = { socket, token, room: undefined, waiters: [], chat: [] };
+    const c = { socket, token, room: undefined, waiters: [], chat: [], watch: [] };
     socket.on('duel:room', (room) => {
       c.room = room;
       c.waiters = c.waiters.filter((w) => !w(room));
     });
     socket.on('duel:chatlog', (log) => { c.chat = [...log]; });
     socket.on('duel:chat', (msg) => { c.chat.push(msg); });
+    socket.on('duel:watch', (w) => { c.watch.push(w); });
     c.request = (event, msg) => socket.emitWithAck(event, msg);
     /** Resolves with the first snapshot (including the current one) that matches. */
     c.until = (pred, ms = 5000) => new Promise((resolve, reject) => {
@@ -43,15 +44,19 @@ async function setup(options = {}) {
 }
 
 const me = (room) => room.players.find((p) => p.id === room.youId);
+/** The round's first question, and a question's state for whoever's snapshot this is. */
+const firstQ = (room) => me(room).state.questions[0].id;
+const qOf = (room, qid, player = me(room)) => player.state.qs.find((q) => q.questionId === qid);
 /** Real test counts for a question, as the browser would report them. */
 function counts(qid, lang = config.lang) {
   const tests = resolveTests(getQuestion(qid), lang);
   const visible = tests.filter((t) => !t.hidden).length;
   return { visible, total: tests.length };
 }
-const solve = (qid) => {
+/** A solve claim as the browser sends it; the code defaults to the reference solution. */
+const solve = (qid, code = getQuestion(qid).solution.sicpy) => {
   const { visible, total } = counts(qid);
-  return { questionId: qid, passedVisible: visible, passedHidden: total - visible, total, timeMs: 5 };
+  return { questionId: qid, passedVisible: visible, passedHidden: total - visible, total, timeMs: 5, code };
 };
 async function waitFor(pred, ms = 5000) {
   const end = Date.now() + ms;
@@ -82,7 +87,11 @@ async function startRound(a, b, pick = raceLists) {
 }
 
 test('settings and picks are validated', () => {
-  assert.deepEqual(validConfig({ ...config, mode: 'x' }), config);
+  const full = { ...config, minutes: 15, partial: false, revealCost: 0 };
+  assert.deepEqual(validConfig({ ...config, mode: 'x' }), full, 'round options take their defaults');
+  assert.deepEqual(validConfig({ ...config, minutes: 20, partial: true, revealCost: 0.25 }), { ...full, minutes: 20, partial: true, revealCost: 0.25 });
+  assert.equal(validConfig({ ...config, minutes: 7 }), null);
+  assert.equal(validConfig({ ...config, revealCost: 0.3 }), null);
   assert.equal(validConfig({ ...config, lang: 'toString' }), null);
   assert.equal(validConfig({ ...config, count: 7 }), null);
   assert.equal(validConfig(null), null);
@@ -104,18 +113,18 @@ test('a round starts when both have voted and are ready, and the loser picks nex
     const ra = await a.until((r) => r.status === 'playing');
     assert.equal(ra.roundInfo.mode, 'code-race');
     assert.equal(ra.roundInfo.category, 'lists');
-    const qid = me(ra).state.current.questionId;
-    assert.equal(me(await b.until((r) => r.status === 'playing')).state.current.questionId, qid, 'same question');
+    const qid = firstQ(ra);
+    assert.equal(firstQ(await b.until((r) => r.status === 'playing')), qid, 'same question');
+    assert.equal(me(ra).state.durationSec, 15 * 60, 'one clock for the round');
 
-    // Ada checks her tests, then solves; Bob skips.
+    // Ada checks her tests, then solves (that is every question, so she is done); Bob stops.
     const { visible } = counts(qid);
     a.socket.emit('duel:action', { type: 'testRun', result: { questionId: qid, passed: 1, total: visible } });
-    const seen = await b.until((r) => named(r, 'Ada').state.current.testRuns === 1);
-    assert.deepEqual(named(seen, 'Ada').state.current.lastTest, { passed: 1, total: visible }, 'Bob sees Ada passing tests');
+    const seen = await b.until((r) => qOf(r, qid, named(r, 'Ada')).testRuns === 1);
+    assert.deepEqual(qOf(seen, qid, named(seen, 'Ada')).lastTest, { passed: 1, total: visible }, 'Bob sees Ada passing tests');
     a.socket.emit('duel:action', { type: 'submitResult', result: solve(qid) });
-    b.socket.emit('duel:action', { type: 'skip' });
-    a.socket.emit('duel:action', { type: 'next' });
-    b.socket.emit('duel:action', { type: 'next' });
+    await a.until((r) => me(r).state.status === 'finished');
+    b.socket.emit('duel:action', { type: 'finish' });
     const done = await a.until((r) => r.status === 'finished');
     assert.equal(done.lastWinnerId, named(done, 'Ada').id);
     assert.equal(done.wins[named(done, 'Ada').id], 1);
@@ -151,6 +160,63 @@ test('chat reaches the other player and is rate-limited', async () => {
   }
 });
 
+test('line counts reach the other player, at most every few seconds and only for questions of the round', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b } = await pair(client);
+    await startRound(a, b);
+    const ra = await a.until((r) => r.status === 'playing');
+    const qid = firstQ(ra);
+
+    a.socket.emit('duel:progress', { questionId: 'XX-E99', lines: 5 });
+    a.socket.emit('duel:progress', { questionId: qid, lines: 7.9 });
+    const seen = await b.until((r) => named(r, 'Ada').progress !== null);
+    assert.deepEqual(named(seen, 'Ada').progress, { questionId: qid, lines: 7 }, 'a stale question is ignored');
+
+    a.socket.emit('duel:progress', { questionId: qid, lines: 12 });
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(named(b.room, 'Ada').progress.lines, 7, 'a second update within the window is dropped');
+  } finally {
+    await close();
+  }
+});
+
+test('spectators see scrambled code until they finish the question, then the real code', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b } = await pair(client);
+    await startRound(a, b);
+    const ra = await a.until((r) => r.status === 'playing');
+    const qid = firstQ(ra);
+    const ada = named(ra, 'Ada').id;
+    const code = 'def secret_name(xs):\n    return 42';
+
+    a.socket.emit('duel:code', { questionId: 'XX-E99', code: 'nope' });
+    a.socket.emit('duel:code', { questionId: qid, code });
+    await waitFor(() => b.watch.some((w) => w.playerId === ada && w.code !== null));
+    const locked = b.watch.findLast((w) => w.playerId === ada);
+    assert.equal(locked.locked, true, 'Bob has not finished the question');
+    assert.equal(locked.questionId, qid);
+    assert.equal(locked.code.length, code.length);
+    assert.equal(locked.code.replace(/\S/g, 'x'), code.replace(/\S/g, 'x'), 'same shape: spaces and line breaks kept');
+    assert.ok(!locked.code.includes('secret') && !locked.code.includes('return') && !locked.code.includes('42'), 'none of the text shows');
+    assert.ok(a.watch.every((w) => w.playerId !== ada), 'nobody is sent their own code');
+
+    const bob = named(ra, 'Bob').id;
+    b.socket.emit('duel:code', { questionId: qid, code: 'def bobs_answer(): pass' });
+    await waitFor(() => a.watch.some((w) => w.playerId === bob && w.code !== null));
+
+    b.socket.emit('duel:action', { type: 'submitResult', result: solve(qid), seq: 1 });
+    await waitFor(() => b.watch.findLast((w) => w.playerId === ada)?.locked === false);
+    assert.equal(b.watch.findLast((w) => w.playerId === ada).code, code, 'after solving, the real code');
+    // Ada has not finished the question, so Bob's code stays scrambled for her.
+    const forAda = a.watch.filter((w) => w.playerId === bob && w.code !== null);
+    assert.ok(forAda.length > 0 && forAda.every((w) => w.locked && !w.code.includes('bobs_answer')), 'Ada is still locked out');
+  } finally {
+    await close();
+  }
+});
+
 test('a reconnect with the same token gets the same seat and the chat log', async () => {
   const { client, close } = await setup();
   try {
@@ -173,7 +239,15 @@ test('a full room and a started game cannot be joined', async () => {
   const { client, close } = await setup();
   try {
     const { a, b, code } = await pair(client);
-    assert.equal((await client().request('duel:join', { code, name: 'C' })).error, 'That room is full.');
+    const extra = [];
+    for (const name of ['C', 'D', 'E', 'F']) {
+      const c = client();
+      assert.ok((await c.request('duel:join', { code, name })).ok, `${name} gets a seat`);
+      extra.push(c);
+    }
+    assert.equal((await client().request('duel:join', { code, name: 'G' })).error, 'That room is full.');
+    for (const c of extra) await c.request('duel:leave');
+    await a.until((r) => r.players.length === 2);
     await startRound(a, b);
     assert.match((await client().request('duel:join', { code, name: 'D' })).error, /middle of a round/);
   } finally {
@@ -189,8 +263,7 @@ test('leaving mid-round lets the other player finish and win', async () => {
     await a.request('duel:leave');
     const room = await b.until((r) => r.players.some((p) => p.left));
     assert.equal(room.hostId, me(room).id, 'host passes to the player who stayed');
-    b.socket.emit('duel:action', { type: 'skip' });
-    b.socket.emit('duel:action', { type: 'next' });
+    b.socket.emit('duel:action', { type: 'finish' });
     const done = await b.until((r) => r.status === 'finished');
     assert.equal(done.lastWinnerId, me(done).id);
   } finally {
@@ -213,20 +286,13 @@ test('a bot joins, picks, plays a whole round and chats', async () => {
     await a.request('duel:ready', { ready: true });
     await a.until((r) => r.status === 'playing', 10000);
 
-    // Ada skips everything; the bot keeps playing until the round is over.
-    const skipAll = (r) => {
-      if (r?.status !== 'playing') return;
-      const s = me(r).state;
-      if (s.status !== 'playing') return;
-      a.socket.emit('duel:action', { type: s.current.status === 'playing' ? 'skip' : 'next' });
-    };
-    a.socket.on('duel:room', skipAll);
-    skipAll(a.room);
+    // Ada stops straight away; the bot plays its round and then stops too.
+    a.socket.emit('duel:action', { type: 'finish' });
     const done = await a.until((r) => r.status === 'finished', 15000);
     const botState = done.players.find((p) => p.id === bot.id).state;
     assert.equal(botState.status, 'finished');
-    assert.equal(botState.results.length, 3);
-    assert.ok(botState.results.some((r) => r.solved), 'a hard bot solves something');
+    assert.equal(botState.qs.length, 3);
+    assert.ok(botState.qs.some((q) => q.status === 'solved'), 'a hard bot solves something');
     assert.equal(done.lastWinnerId, bot.id);
     assert.ok(a.chat.some((m) => m.fromId === bot.id), 'the bot said something');
 
@@ -250,15 +316,18 @@ test('made-up test counts are rejected, real ones accepted', async () => {
     const { a, b } = await pair(client);
     const room = await startRound(a, b);
     await b.until((r) => r?.status === 'playing');
-    const qid = me(room).state.current.questionId;
+    const qid = firstQ(room);
     // A one-line "cheat": claim the question has a single test and it passes.
     a.socket.emit('duel:action', { type: 'submitResult', result: { questionId: qid, passedVisible: 1, passedHidden: 0, total: 1, timeMs: 1 }, seq: 1 });
     const after = await a.until((r) => r.yourSeq === 1);
-    assert.equal(me(after).state.current.status, 'playing', 'not solved');
-    assert.equal(me(after).state.current.attempts, 0, 'not even counted');
-    a.socket.emit('duel:action', { type: 'submitResult', result: solve(qid), seq: 2 });
-    const solved = await a.until((r) => r.yourSeq === 2);
-    assert.equal(me(solved).state.current.status, 'solved');
+    assert.equal(qOf(after, qid).status, 'open', 'not solved');
+    assert.equal(qOf(after, qid).attempts, 0, 'not even counted');
+    // Nor a question that is not in the round.
+    a.socket.emit('duel:action', { type: 'submitResult', result: solve('CR-E01'), seq: 2 });
+    await a.until((r) => r.yourSeq === 2);
+    a.socket.emit('duel:action', { type: 'submitResult', result: solve(qid), seq: 3 });
+    const solved = await a.until((r) => r.yourSeq === 3);
+    assert.equal(qOf(solved, qid).status, 'solved');
   } finally {
     await close();
   }
@@ -287,8 +356,7 @@ test('a player who stays disconnected mid-round leaves, so the other is not stuc
     a.socket.close();
     const room = await b.until((r) => r.players.some((p) => p.left), 3000);
     assert.ok(b.chat.some((m) => m.text.includes('disconnected for too long')));
-    b.socket.emit('duel:action', { type: 'skip' });
-    b.socket.emit('duel:action', { type: 'next' });
+    b.socket.emit('duel:action', { type: 'finish' });
     const done = await b.until((r) => r.status === 'finished');
     assert.equal(done.lastWinnerId, me(room).id, 'the player who stayed wins');
   } finally {
@@ -332,6 +400,187 @@ test('too many connections from one address are refused', async () => {
     const sockets = [client(), client(), client()];
     await new Promise((r) => setTimeout(r, 300));
     assert.deepEqual(sockets.map((c) => c.socket.connected), [true, true, false]);
+  } finally {
+    await close();
+  }
+});
+
+test('the server re-runs claimed solves (Python §) and rejects wrong code', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b } = await pair(client);
+    const room = await startRound(a, b);
+    await b.until((r) => r?.status === 'playing');
+    const qid = firstQ(room);
+    const verdicts = [];
+    a.socket.on('duel:verify', (v) => verdicts.push(v));
+
+    // Claims every test passes, but the code is just the starter stub.
+    const stub = getQuestion(qid).starter.sicpy;
+    a.socket.emit('duel:action', { type: 'submitResult', result: solve(qid, stub), seq: 1 });
+    const rejected = await a.until((r) => r.yourSeq === 1, 15000);
+    assert.equal(qOf(rejected, qid).status, 'open');
+    assert.equal(qOf(rejected, qid).failedSubmits, 1, 'counts as a wrong submit');
+    assert.match(verdicts[0]?.message ?? '', /re-ran your code/);
+
+    // No code at all is not accepted either.
+    a.socket.emit('duel:action', { type: 'submitResult', result: { ...solve(qid), code: undefined }, seq: 2 });
+    const noCode = await a.until((r) => r.yourSeq === 2, 15000);
+    assert.equal(qOf(noCode, qid).status, 'open');
+
+    // The real solution passes the check.
+    a.socket.emit('duel:action', { type: 'submitResult', result: solve(qid), seq: 3 });
+    const solved = await a.until((r) => r.yourSeq === 3, 15000);
+    assert.equal(qOf(solved, qid).status, 'solved');
+  } finally {
+    await close();
+  }
+});
+
+test('an infinite loop in a claimed solve only fails the submit', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b } = await pair(client);
+    const room = await startRound(a, b);
+    const qid = firstQ(room);
+    const fn = getQuestion(qid).functionName;
+    const loop = `def ${fn}(*args):\n    while True:\n        x = 1`;
+    a.socket.emit('duel:action', { type: 'submitResult', result: solve(qid, loop), seq: 1 });
+    const after = await a.until((r) => r.yourSeq === 1, 30000);
+    assert.equal(qOf(after, qid).status, 'open');
+    // The server still answers.
+    assert.ok((await b.request('duel:ready', { ready: true })).error);
+  } finally {
+    await close();
+  }
+});
+
+test('code that blows the memory limit on the server counts as a wrong submit', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b } = await pair(client);
+    const room = await startRound(a, b);
+    const qid = firstQ(room);
+    const sig = getQuestion(qid).starter.sicpy.split('\n')[0];
+    const bomb = `${sig}\n    a = [0] * 2000000000\n    return None`;
+    a.socket.emit('duel:action', { type: 'submitResult', result: solve(qid, bomb), seq: 1 });
+    const after = await a.until((r) => r.yourSeq === 1, 30000);
+    assert.equal(qOf(after, qid).status, 'open');
+    assert.equal(qOf(after, qid).failedSubmits, 1);
+    // The next honest solve is still checked and accepted.
+    a.socket.emit('duel:action', { type: 'submitResult', result: solve(qid), seq: 2 });
+    const solved = await a.until((r) => r.yourSeq === 2, 30000);
+    assert.equal(qOf(solved, qid).status, 'solved');
+  } finally {
+    await close();
+  }
+});
+
+/** Ada (host), Bob and Cy in a room. */
+async function trio(client, cfg = config) {
+  const a = client();
+  const b = client();
+  const c = client();
+  await a.until((r) => r === null);
+  const { code } = await a.request('duel:create', { name: 'Ada', config: cfg });
+  await b.request('duel:join', { code, name: 'Bob' });
+  await c.request('duel:join', { code, name: 'Cy' });
+  await a.until((r) => r?.players.length === 3);
+  return { a, b, c };
+}
+
+test('teammates share one score, one live editor and a team chat', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b, c } = await trio(client);
+    assert.ok((await a.request('duel:team', { team: 'red' })).ok);
+    assert.ok((await b.request('duel:team', { team: 'red' })).ok);
+    assert.match((await b.request('duel:team', { team: 'red', playerId: named(b.room, 'Cy').id })).error, /own team/);
+    for (const x of [a, b, c]) await x.request('duel:pick', raceLists);
+    for (const x of [a, b, c]) await x.request('duel:ready', { ready: true });
+    const room = await c.until((r) => r.status === 'playing');
+    assert.equal(room.sides.length, 2, 'Red team and Cy');
+    const red = room.sides.find((s) => s.team === 'red');
+    assert.deepEqual(red.memberIds.sort(), [named(room, 'Ada').id, named(room, 'Bob').id].sort());
+    const qid = firstQ(room);
+
+    // Ada and Bob edit one document: Ada's change reaches Bob.
+    const opened = await a.request('team:open', { questionId: qid });
+    assert.equal(opened.version, 0);
+    assert.equal(opened.doc, getQuestion(qid).starter.sicpy);
+    const bobUpdates = [];
+    b.socket.on('team:updates', (u) => bobUpdates.push(u));
+    const insert = '# plan: loop over the list\n';
+    const pushed = await a.request('team:push', { questionId: qid, version: 0, updates: [{ clientID: 'ada1', changes: [[0, insert], opened.doc.length] }] });
+    assert.ok(pushed.ok);
+    await waitFor(() => bobUpdates.length === 1);
+    assert.equal(bobUpdates[0].from, 0);
+    assert.equal((await b.request('team:open', { questionId: qid })).doc, insert + opened.doc);
+    // An edit made on an old version is turned away, with what was missed.
+    const stale = await b.request('team:push', { questionId: qid, version: 0, updates: [{ clientID: 'bob1', changes: [[0, 'x'], opened.doc.length] }] });
+    assert.ok(stale.stale);
+    assert.equal(stale.updates.length, 1);
+    // Cy is not in a team.
+    assert.ok((await c.request('team:open', { questionId: qid })).error);
+
+    // Cy watches Ada: the team's document, scrambled.
+    await waitFor(() => c.watch.some((w) => w.playerId === named(room, 'Ada').id && w.code !== null));
+    const seen = c.watch.findLast((w) => w.playerId === named(room, 'Ada').id);
+    assert.equal(seen.locked, true);
+    assert.equal(seen.code.length, (insert + opened.doc).length);
+    assert.ok(!seen.code.includes('plan'));
+
+    // Team chat stays in the team.
+    a.socket.emit('duel:chat', { text: 'I take the loop', team: true });
+    await waitFor(() => b.chat.some((m) => m.text === 'I take the loop'));
+    assert.equal(b.chat.find((m) => m.text === 'I take the loop').team, 'red');
+    await new Promise((r) => setTimeout(r, 100));
+    assert.ok(!c.chat.some((m) => m.text === 'I take the loop'), 'Cy does not see it');
+
+    // Bob's solve counts for Ada too, and ends their round (one question).
+    b.socket.emit('duel:action', { type: 'submitResult', result: solve(qid), seq: 1 });
+    const solvedForAda = await a.until((r) => qOf(r, qid)?.status === 'solved');
+    assert.equal(me(solvedForAda).state.total, named(solvedForAda, 'Bob').state.total);
+    // Cy loses, so Cy picks next.
+    c.socket.emit('duel:action', { type: 'finish' });
+    const done = await a.until((r) => r.status === 'finished');
+    assert.equal(done.lastWinnerSide, 'team:red');
+    assert.equal(done.wins[named(done, 'Ada').id], 1);
+    assert.equal(done.wins[named(done, 'Bob').id], 1);
+    await a.request('duel:next');
+    const lobby = await a.until((r) => r.status === 'lobby');
+    assert.equal(lobby.pick.pickerId, named(lobby, 'Cy').id);
+  } finally {
+    await close();
+  }
+});
+
+test('the host\'s round options reach everyone; reveals only when allowed and only secret tests', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b } = await pair(client);
+    assert.ok((await b.request('duel:config', { config: { ...config, minutes: 5 } })).error, 'only the host');
+    assert.ok((await a.request('duel:config', { config: { ...config, minutes: 20, partial: true, revealCost: 0.25 } })).ok);
+    const seen = await b.until((r) => r.config.minutes === 20);
+    assert.deepEqual(seen.config, { ...config, minutes: 20, partial: true, revealCost: 0.25 });
+
+    const room = await startRound(a, b);
+    const qid = firstQ(room);
+    const tests = resolveTests(getQuestion(qid), config.lang);
+    const secret = tests.find((t) => t.hidden).index;
+    const visible = tests.find((t) => !t.hidden).index;
+    a.socket.emit('duel:action', { type: 'reveal', result: { questionId: qid, testIndex: visible }, seq: 1 });
+    a.socket.emit('duel:action', { type: 'reveal', result: { questionId: qid, testIndex: secret }, seq: 2 });
+    const after = await a.until((r) => r.yourSeq === 2);
+    assert.deepEqual(qOf(after, qid).reveals, [secret]);
+
+    // Partial credit: half the secret tests passing earns points without a solve.
+    const { visible: v, total } = counts(qid);
+    const half = Math.floor((total - v) / 2);
+    b.socket.emit('duel:action', { type: 'submitResult', result: { ...solve(qid), passedHidden: half }, seq: 1 });
+    const partial = await b.until((r) => r.yourSeq === 1);
+    assert.equal(qOf(partial, qid).status, 'open');
+    assert.ok(me(partial).state.total > 0, 'secret tests passed earn points');
   } finally {
     await close();
   }

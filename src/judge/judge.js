@@ -1,5 +1,6 @@
 // Runs a question's tests through the runner and builds results that are safe
-// to show: secret tests never carry their call, expected value, output or error.
+// to show: secret tests never carry their call, expected value, output or error
+// (a submit keeps those apart, in `secret`, for a duel's paid reveal).
 import { runTests } from '../runners/runner.js';
 import { resolveTests, findBanned } from './resolve.js';
 
@@ -46,5 +47,8 @@ export async function submitSolution(question, lang, code) {
     ...s,
     total: tests.length,
     solved: s.passedVisible === s.totalVisible && s.passedHidden === s.totalHidden,
+    // Kept off the results: what each secret test did, for a duel's paid reveal.
+    secret: Object.fromEntries(raw.map((r, i) => [r, tests[i]]).filter(([, t]) => t.hidden)
+      .map(([r, t]) => [t.index, { call: t.call, expectText: t.expect, got: r.got, error: r.error }])),
   };
 }

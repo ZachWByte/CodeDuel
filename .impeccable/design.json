@@ -1,0 +1,623 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-29T03:09:44.271Z",
+  "title": "Design System: Code Duel",
+  "extensions": {
+    "colorMeta": {
+      "g0": {
+        "role": "neutral",
+        "displayName": "Table Edge",
+        "tonalRamp": [
+          "#12170f",
+          "#182015",
+          "#1f291b",
+          "#283523",
+          "#36462f",
+          "#5b6d50",
+          "#9fae8f",
+          "#cdd6c1"
+        ]
+      },
+      "g1": {
+        "role": "neutral",
+        "displayName": "Board Vinyl",
+        "tonalRamp": [
+          "#12170f",
+          "#182015",
+          "#1f291b",
+          "#283523",
+          "#36462f",
+          "#5b6d50",
+          "#9fae8f",
+          "#cdd6c1"
+        ]
+      },
+      "g2": {
+        "role": "neutral",
+        "displayName": "Panel Green",
+        "tonalRamp": [
+          "#12170f",
+          "#182015",
+          "#1f291b",
+          "#283523",
+          "#36462f",
+          "#5b6d50",
+          "#9fae8f",
+          "#cdd6c1"
+        ]
+      },
+      "g3": {
+        "role": "neutral",
+        "displayName": "Raised Square",
+        "tonalRamp": [
+          "#12170f",
+          "#182015",
+          "#1f291b",
+          "#283523",
+          "#36462f",
+          "#5b6d50",
+          "#9fae8f",
+          "#cdd6c1"
+        ]
+      },
+      "g4": {
+        "role": "neutral",
+        "displayName": "Rule Line",
+        "tonalRamp": [
+          "#12170f",
+          "#182015",
+          "#1f291b",
+          "#283523",
+          "#36462f",
+          "#5b6d50",
+          "#9fae8f",
+          "#cdd6c1"
+        ]
+      },
+      "g5": {
+        "role": "neutral",
+        "displayName": "Strong Rule",
+        "tonalRamp": [
+          "#12170f",
+          "#182015",
+          "#1f291b",
+          "#283523",
+          "#36462f",
+          "#5b6d50",
+          "#9fae8f",
+          "#cdd6c1"
+        ]
+      },
+      "g6": {
+        "role": "neutral",
+        "displayName": "Hover Rule",
+        "tonalRamp": [
+          "#12170f",
+          "#182015",
+          "#1f291b",
+          "#283523",
+          "#36462f",
+          "#5b6d50",
+          "#9fae8f",
+          "#cdd6c1"
+        ]
+      },
+      "g7": {
+        "role": "neutral",
+        "displayName": "Muted Felt",
+        "tonalRamp": [
+          "#12170f",
+          "#182015",
+          "#1f291b",
+          "#283523",
+          "#36462f",
+          "#5b6d50",
+          "#9fae8f",
+          "#cdd6c1"
+        ]
+      },
+      "g8": {
+        "role": "neutral",
+        "displayName": "Pale Felt",
+        "tonalRamp": [
+          "#12170f",
+          "#182015",
+          "#1f291b",
+          "#283523",
+          "#36462f",
+          "#5b6d50",
+          "#9fae8f",
+          "#cdd6c1"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Vinyl Ink",
+        "tonalRamp": [
+          "#12170f",
+          "#182015",
+          "#1f291b",
+          "#283523",
+          "#36462f",
+          "#5b6d50",
+          "#9fae8f",
+          "#cdd6c1"
+        ]
+      },
+      "case": {
+        "role": "neutral",
+        "displayName": "Clock Case Black",
+        "tonalRamp": [
+          "#12170f",
+          "#182015",
+          "#1f291b",
+          "#283523",
+          "#36462f",
+          "#5b6d50",
+          "#9fae8f",
+          "#cdd6c1"
+        ]
+      },
+      "buff": {
+        "role": "primary",
+        "displayName": "Light Square Buff",
+        "canonical": "#ecdfbf",
+        "tonalRamp": [
+          "oklch(15% 0.005 88)",
+          "oklch(25% 0.015 88)",
+          "oklch(35% 0.020 88)",
+          "oklch(45% 0.024 88)",
+          "oklch(55% 0.029 88)",
+          "oklch(65% 0.033 88)",
+          "oklch(80% 0.040 88)",
+          "oklch(95% 0.022 88)"
+        ]
+      },
+      "buff-hi": {
+        "role": "primary",
+        "displayName": "Buff Highlight",
+        "tonalRamp": [
+          "oklch(15% 0.005 88)",
+          "oklch(25% 0.015 88)",
+          "oklch(35% 0.020 88)",
+          "oklch(45% 0.024 88)",
+          "oklch(55% 0.029 88)",
+          "oklch(65% 0.033 88)",
+          "oklch(80% 0.040 88)",
+          "oklch(95% 0.022 88)"
+        ]
+      },
+      "buff-ink": {
+        "role": "primary",
+        "displayName": "Square Ink",
+        "tonalRamp": [
+          "#12170f",
+          "#182015",
+          "#1f291b",
+          "#283523",
+          "#36462f",
+          "#5b6d50",
+          "#9fae8f",
+          "#cdd6c1"
+        ]
+      },
+      "buff-mute": {
+        "role": "primary",
+        "displayName": "Square Mute",
+        "tonalRamp": [
+          "#12170f",
+          "#182015",
+          "#1f291b",
+          "#283523",
+          "#36462f",
+          "#5b6d50",
+          "#9fae8f",
+          "#cdd6c1"
+        ]
+      },
+      "flag": {
+        "role": "secondary",
+        "displayName": "Flag Red",
+        "canonical": "#e2553f",
+        "tonalRamp": [
+          "oklch(15% 0.044 33)",
+          "oklch(25% 0.105 33)",
+          "oklch(35% 0.122 33)",
+          "oklch(45% 0.139 33)",
+          "oklch(55% 0.156 33)",
+          "oklch(65% 0.167 33)",
+          "oklch(80% 0.141 33)",
+          "oklch(95% 0.058 33)"
+        ]
+      },
+      "flag-text": {
+        "role": "secondary",
+        "displayName": "Flag Text",
+        "tonalRamp": [
+          "oklch(15% 0.044 33)",
+          "oklch(25% 0.105 33)",
+          "oklch(35% 0.122 33)",
+          "oklch(45% 0.139 33)",
+          "oklch(55% 0.156 33)",
+          "oklch(65% 0.167 33)",
+          "oklch(80% 0.141 33)",
+          "oklch(95% 0.058 33)"
+        ]
+      },
+      "flag-bg": {
+        "role": "secondary",
+        "displayName": "Flag Wash"
+      },
+      "brass": {
+        "role": "tertiary",
+        "displayName": "Tournament Brass",
+        "canonical": "#dcab4c",
+        "tonalRamp": [
+          "oklch(15% 0.025 80)",
+          "oklch(25% 0.064 80)",
+          "oklch(35% 0.077 80)",
+          "oklch(45% 0.090 80)",
+          "oklch(55% 0.103 80)",
+          "oklch(65% 0.116 80)",
+          "oklch(80% 0.125 80)",
+          "oklch(95% 0.053 80)"
+        ]
+      },
+      "brass-bg": {
+        "role": "tertiary",
+        "displayName": "Brass Wash"
+      },
+      "mint": {
+        "role": "tertiary",
+        "displayName": "Pass Mint",
+        "canonical": "#8ddca6",
+        "tonalRamp": [
+          "oklch(15% 0.018 155)",
+          "oklch(25% 0.046 155)",
+          "oklch(35% 0.057 155)",
+          "oklch(45% 0.068 155)",
+          "oklch(55% 0.079 155)",
+          "oklch(65% 0.090 155)",
+          "oklch(80% 0.107 155)",
+          "oklch(95% 0.048 155)"
+        ]
+      },
+      "mint-bg": {
+        "role": "tertiary",
+        "displayName": "Mint Wash"
+      },
+      "code-bg": {
+        "role": "neutral",
+        "displayName": "Editor Green"
+      },
+      "code-ink": {
+        "role": "neutral",
+        "displayName": "Code Ink"
+      },
+      "code-gutter": {
+        "role": "neutral",
+        "displayName": "Gutter Green"
+      },
+      "code-line": {
+        "role": "neutral",
+        "displayName": "Active Line Tint"
+      },
+      "code-select": {
+        "role": "neutral",
+        "displayName": "Selection Tint"
+      },
+      "syn-keyword": {
+        "role": "tertiary",
+        "displayName": "Keyword Gold"
+      },
+      "syn-fn": {
+        "role": "primary",
+        "displayName": "Function Buff"
+      },
+      "syn-string": {
+        "role": "tertiary",
+        "displayName": "String Mint"
+      },
+      "syn-number": {
+        "role": "secondary",
+        "displayName": "Number Coral"
+      },
+      "syn-comment": {
+        "role": "neutral",
+        "displayName": "Comment Felt"
+      },
+      "syn-punct": {
+        "role": "neutral",
+        "displayName": "Punctuation Felt"
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "App title on Home and Lobby; results and duel headings."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Problem title."
+      },
+      "column-title": {
+        "displayName": "Column Title",
+        "purpose": "Lobby column heads and chat panel head."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Card titles."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Problem text (max 68ch) and general UI copy."
+      },
+      "control": {
+        "displayName": "Control",
+        "purpose": "Buttons, fields, segmented options, field labels."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Uppercase expanded labels: clock faces, table headers, select names, Scoresheet."
+      },
+      "numeral": {
+        "displayName": "Condensed Numeral",
+        "purpose": "Every counted value: clock, score, question, room code, countdown, points."
+      },
+      "mark": {
+        "displayName": "Annotation Mark",
+        "purpose": "Scoresheet marks !!, !, !?, ?."
+      },
+      "code": {
+        "displayName": "Code",
+        "purpose": "Editor, console, tests; ligatures off."
+      }
+    },
+    "shadows": [
+      {
+        "name": "clock-case",
+        "value": "0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 6px 18px rgba(0, 0, 0, 0.45)",
+        "purpose": "The one resting shadow: the clock case sits on the board."
+      },
+      {
+        "name": "floating-panel",
+        "value": "0 18px 50px rgba(0, 0, 0, 0.55)",
+        "purpose": "Modals and the View panel."
+      },
+      {
+        "name": "toast",
+        "value": "0 8px 24px rgba(0, 0, 0, 0.45)",
+        "purpose": "Toasts and the chat preview."
+      },
+      {
+        "name": "side-panel",
+        "value": "-12px 0 32px rgba(0, 0, 0, 0.35)",
+        "purpose": "Chat side panel left edge."
+      },
+      {
+        "name": "opponent-flash",
+        "value": "0 0 0 3px rgba(220, 171, 76, 0.3)",
+        "purpose": "Brass ring pulsed twice on an opponent milestone."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-out",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "The one easing: clock press, flag lift and fall, mark stamp, chevron, panel slide."
+      },
+      {
+        "name": "state-change",
+        "value": "0.15s",
+        "purpose": "Colour and border transitions on controls."
+      },
+      {
+        "name": "clock-press",
+        "value": "scale(0.82) to scale(1), opacity 0.4 to 1, 0.45s ease-out",
+        "purpose": "Countdown numeral on each tick."
+      },
+      {
+        "name": "mark-stamp",
+        "value": "scale(1.7) to scale(1), opacity 0 to 1, 0.45s ease-out",
+        "purpose": "Annotation mark landing on the end card."
+      },
+      {
+        "name": "flag",
+        "value": "transform and top 0.5s ease-out",
+        "purpose": "Pennant rises at 30 s; flag rotates 90deg at 0."
+      },
+      {
+        "name": "clock-tick",
+        "value": "1s steps(1) infinite",
+        "purpose": "Low-time face blinks between buff and pale flag tint."
+      },
+      {
+        "name": "slide-in",
+        "value": "translateX(24px) to 0, 0.28s ease-out",
+        "purpose": "Chat side panel entrance."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "animation and transition 0.01ms",
+        "purpose": "prefers-reduced-motion collapses all motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "home-narrow",
+        "value": "560px"
+      },
+      {
+        "name": "lobby-stack",
+        "value": "760px"
+      },
+      {
+        "name": "two-column",
+        "value": "900px"
+      },
+      {
+        "name": "container-work-compact",
+        "value": "820px / 700px / 520px (work column container)"
+      },
+      {
+        "name": "container-game",
+        "value": "860px / 760px (game container)"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "Default solid button on the board ramp.",
+      "html": "<button class=\"ds-btn\"><svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M7 5.5v13l11-6.5z\"/></svg>Run</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; gap: 7px; font-family: var(--sans); font-size: 14px; font-weight: 600; color: var(--ink); background: var(--g4); border: 1px solid var(--g5); border-radius: var(--r-sm); padding: 6px 13px; cursor: pointer; transition: background 0.15s, border-color 0.15s, transform 0.1s; } .ds-btn:hover { background: var(--g5); border-color: var(--g6); } .ds-btn:active { transform: translateY(1px); } .ds-btn:focus-visible { outline: 2px solid var(--buff); outline-offset: 2px; }"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The light square: the one move to make (Submit, Start, Ready).",
+      "html": "<button class=\"ds-btn-primary\">Submit</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; gap: 7px; font-family: var(--sans); font-size: 14px; font-weight: 800; color: var(--buff-ink); background: var(--buff); border: 1px solid var(--buff); border-radius: var(--r-sm); padding: 6px 13px; cursor: pointer; transition: background 0.15s, border-color 0.15s, transform 0.1s; } .ds-btn-primary:hover { background: var(--buff-hi); border-color: var(--buff-hi); } .ds-btn-primary:active { transform: translateY(1px); } .ds-btn-primary:focus-visible { outline: 2px solid var(--buff); outline-offset: 2px; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Header and secondary actions (Home, View, Reset, Skip).",
+      "html": "<button class=\"ds-btn-ghost\"><svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M19 12H5M11 6l-6 6 6 6\"/></svg>Home</button>",
+      "css": ".ds-btn-ghost { display: inline-flex; align-items: center; gap: 7px; font-family: var(--sans); font-size: 14px; font-weight: 600; color: var(--g8); background: transparent; border: 1px solid transparent; border-radius: var(--r-sm); padding: 6px 13px; cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s; } .ds-btn-ghost:hover { background: var(--g3); border-color: var(--g4); color: var(--ink); } .ds-btn-ghost:focus-visible { outline: 2px solid var(--buff); outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Inputs sit in the page well with a buff caret and focus ring.",
+      "html": "<input class=\"ds-input\" placeholder=\"Search questions\">",
+      "css": ".ds-input { font-family: var(--sans); font-size: 14px; color: var(--ink); background: var(--g1); border: 1px solid var(--g5); border-radius: var(--r-sm); padding: 7px 10px; caret-color: var(--buff); } .ds-input::placeholder { color: var(--g7); } .ds-input:focus-visible { outline: 2px solid var(--buff); outline-offset: 0; border-color: transparent; }"
+    },
+    {
+      "name": "Segmented Control",
+      "kind": "chip",
+      "refersTo": "segmented-option-active",
+      "description": "Choice in a g1 well; the selected option is the light square.",
+      "html": "<div class=\"ds-seg-group\"><button class=\"ds-seg ds-seg-active\">Python §3</button><button class=\"ds-seg\">Python §4</button></div>",
+      "css": ".ds-seg-group { display: inline-flex; gap: 3px; padding: 3px; background: var(--g1); border: 1px solid var(--g4); border-radius: var(--r); } .ds-seg { font-family: var(--sans); font-size: 14px; font-weight: 600; background: transparent; color: var(--g8); border: 0; border-radius: var(--r-sm); padding: 6px 14px; cursor: pointer; transition: background 0.15s, color 0.15s; } .ds-seg:hover:not(.ds-seg-active) { background: var(--g3); color: var(--ink); } .ds-seg:focus-visible { outline: 2px solid var(--buff); outline-offset: 2px; } .ds-seg-active { background: var(--buff); color: var(--buff-ink); font-weight: 750; }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Flat g2 panel with a g4 rule and 12px corners.",
+      "html": "<section class=\"ds-card\"><div class=\"ds-card-title\">Solo game</div><p class=\"ds-card-body\">Pick a mode and play against the clock.</p></section>",
+      "css": ".ds-card { background: var(--g2); border: 1px solid var(--g4); border-radius: var(--r-lg); padding: 22px 24px; color: var(--ink); font-family: var(--sans); } .ds-card-title { font-size: 18px; font-weight: 750; letter-spacing: -0.01em; margin-bottom: 6px; } .ds-card-body { margin: 0; color: var(--g7); font-size: 14px; }"
+    },
+    {
+      "name": "Tags and Difficulty",
+      "kind": "chip",
+      "refersTo": "tag",
+      "description": "Pills for topic tags and meaning-coloured difficulty.",
+      "html": "<span class=\"ds-qid\">BH-E01</span> <span class=\"ds-diff ds-easy\">Easy</span> <span class=\"ds-diff ds-medium\">Medium</span> <span class=\"ds-diff ds-hard\">Hard</span> <span class=\"ds-tag\">loops</span>",
+      "css": ".ds-qid { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--brass); } .ds-tag, .ds-diff { font-family: var(--sans); font-size: 12px; font-weight: 600; padding: 1px 9px; border-radius: 999px; } .ds-tag { background: var(--g4); color: var(--g8); } .ds-diff { font-weight: 700; } .ds-easy { color: var(--mint); background: var(--mint-bg); } .ds-medium { color: var(--brass); background: var(--brass-bg); } .ds-hard { color: var(--flag-text); background: var(--flag-bg); }"
+    },
+    {
+      "name": "Clock Case",
+      "kind": "custom",
+      "refersTo": "clock-case",
+      "description": "Signature: black case, buff lit face, condensed numerals, flag at the lit face.",
+      "html": "<div class=\"ds-case\"><div class=\"ds-face\"><span class=\"ds-label\">Question</span><span class=\"ds-num\">1/5</span></div><div class=\"ds-face ds-face-lit\"><span class=\"ds-label\">Clock</span><span class=\"ds-num\">02:52</span><span class=\"ds-flag\"></span></div><div class=\"ds-face\"><span class=\"ds-label\">Score</span><span class=\"ds-num\">148</span></div></div>",
+      "css": ".ds-case { display: inline-flex; gap: 4px; padding: 4px; background: var(--case); border-radius: 10px; box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 6px 18px rgba(0, 0, 0, 0.45); } .ds-face { position: relative; display: flex; flex-direction: column; gap: 3px; padding: 6px 14px 5px; border-radius: 6px; background: var(--g3); color: var(--ink); min-width: 74px; } .ds-face-lit { background: var(--buff); color: var(--buff-ink); padding-right: 26px; } .ds-label { font-family: var(--sans); font-size: 10px; font-weight: 700; font-stretch: 118%; text-transform: uppercase; letter-spacing: 0.09em; color: var(--g7); } .ds-face-lit .ds-label { color: var(--buff-mute); } .ds-num { font-family: var(--sans); font-stretch: 62%; font-weight: 800; font-size: 28px; line-height: 1; font-variant-numeric: tabular-nums; } .ds-flag { position: absolute; right: 9px; top: 50%; width: 10px; height: 20px; margin-top: -8px; } .ds-flag::before { content: \"\"; position: absolute; left: 0; top: 0; width: 2px; height: 20px; background: var(--buff-ink); opacity: 0.6; } .ds-flag::after { content: \"\"; position: absolute; left: 2px; top: 12px; width: 8px; height: 7px; background: var(--flag); clip-path: polygon(0 0, 100% 50%, 0 100%); transition: top 0.5s cubic-bezier(0.16, 1, 0.3, 1); } .ds-case:hover .ds-flag::after { top: 0; }"
+    },
+    {
+      "name": "Scoresheet Strip",
+      "kind": "custom",
+      "refersTo": "scoresheet",
+      "description": "Signature: every question notated with an annotation mark.",
+      "html": "<div class=\"ds-sheet\"><span class=\"ds-sheet-label\">Scoresheet</span><span class=\"ds-move\"><span class=\"ds-n\">1.</span><span class=\"ds-mq\">BH-E01</span><span class=\"ds-pts\">+148</span><span class=\"ds-mark ds-brilliant\" title=\"Brilliant: solved with no penalties and at least half the speed bonus\">!!</span></span><span class=\"ds-move\"><span class=\"ds-n\">2.</span><span class=\"ds-mq\">LS-M03</span><span class=\"ds-pts\">+82</span><span class=\"ds-mark ds-dubious\" title=\"Solved with penalties\">!?</span></span><span class=\"ds-move ds-move-now\"><span class=\"ds-n\">3.</span><span class=\"ds-mq\">RC-H02</span><span class=\"ds-pending\">playing</span></span></div>",
+      "css": ".ds-sheet { display: flex; align-items: stretch; min-height: 40px; background: var(--g0); border-top: 1px solid var(--g4); font-family: var(--sans); color: var(--ink); } .ds-sheet-label { display: flex; align-items: center; padding: 0 16px; border-right: 1px solid var(--g4); font-size: 11px; font-weight: 700; font-stretch: 118%; text-transform: uppercase; letter-spacing: 0.09em; color: var(--g7); } .ds-move { display: flex; align-items: center; gap: 9px; padding: 0 16px; border-right: 1px solid var(--g3); font-size: 13px; white-space: nowrap; } .ds-n { color: var(--g7); font-weight: 600; } .ds-mq { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--brass); } .ds-pts { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--g8); } .ds-move-now { background: var(--g2); box-shadow: inset 0 2px var(--buff); } .ds-pending { color: var(--buff); font-weight: 700; } .ds-mark { font-weight: 900; font-stretch: 80%; letter-spacing: 0.02em; min-width: 1.4em; text-align: center; } .ds-brilliant { color: var(--mint); } .ds-dubious { color: var(--brass); }"
+    },
+    {
+      "name": "Chat Messages",
+      "kind": "custom",
+      "refersTo": "chat-message",
+      "description": "Board-green bubbles; your own message is the light square.",
+      "html": "<div class=\"ds-chat\"><div class=\"ds-msg\"><div class=\"ds-msg-name\">Ana</div>good luck!</div><div class=\"ds-msg ds-msg-mine\">gg</div><div class=\"ds-msg-system\">Round 2 starts</div></div>",
+      "css": ".ds-chat { display: flex; flex-direction: column; gap: 6px; font-family: var(--sans); font-size: 14px; color: var(--ink); width: 280px; } .ds-msg { max-width: 88%; align-self: flex-start; background: var(--g3); border-radius: 10px 10px 10px 3px; padding: 5px 10px; } .ds-msg-name { font-size: 12px; font-weight: 700; color: var(--brass); } .ds-msg-mine { align-self: flex-end; background: var(--buff); color: var(--buff-ink); border-radius: 10px 10px 3px 10px; } .ds-msg-system { align-self: center; color: var(--g7); font-size: 12px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Tournament Hall",
+    "overview": "Every round is a rated game. The app is a tournament table seen from above: board-green vinyl under everything, buff light squares where you act, a black clock case with a red flag at the centre of play, and a scoresheet along the bottom that notates every question with a chess annotation mark. It refuses the grey IDE-with-a-blue-accent shell of a practice site; nothing here is grey and nothing is blue.\n\nThe system is dense and operational. Students read, code, run and submit under time pressure, so the surfaces stay flat, the colour stays quiet, and the few saturated notes carry meaning: buff means \"this is the move\", flag red means time and failure, brass means identity and personal record, mint means a test passed. Every scoring rule sits beside its live number; nothing is explained in a paragraph that a number can show.\n\nType is one variable family (Archivo) stretched across its width axis to do three jobs: condensed heavy numerals for anything counted against the clock, normal width for UI, expanded small caps for labels. JetBrains Mono appears only where code and test data live, with ligatures off so students see the characters they typed.",
+    "keyCharacteristics": [
+      "One nine-step board-green ramp (g0 to g8) supplies every neutral surface, border and muted text.",
+      "Buff is the light square: primary action, lit clock face, selected option, own chat message, focus ring, cursor.",
+      "The black clock case with buff faces is the one container that matters; its flag lifts at 30 s and falls at 0.",
+      "Condensed numerals (62% width, 800, tabular) are one system for clock, scores, room codes and countdown.",
+      "Scoresheet annotation marks (!!, !, !?, ?) grade every finished question, each with a plain-words tooltip and a legend.",
+      "Authored line icons on a 24 grid, 1.75 stroke, round caps; nothing from an icon font."
+    ],
+    "rules": [
+      {
+        "name": "The One Ramp Rule",
+        "body": "Every neutral is a step of the board-green ramp. No off-ramp greys, no cool slate, no pure black outside the clock case.",
+        "section": "colors"
+      },
+      {
+        "name": "The Light Square Rule",
+        "body": "Buff marks the move the student can make or has made: one primary action per toolbar or form, one lit face per clock case. If two things are buff side by side, one of them is wrong.",
+        "section": "colors"
+      },
+      {
+        "name": "The Meaning-Only Colour Rule",
+        "body": "Flag, brass and mint never decorate. Red is time or failure, brass is an id, a score or a record, mint is a pass. Red text on green uses flag-text, never flag.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Numeral Rule",
+        "body": "Anything counted (time, score, question number, room code, countdown, points) uses the condensed numeral: wdth 62%, weight 800, tabular figures. Never a second numeral style.",
+        "section": "typography"
+      },
+      {
+        "name": "The Width Axis Rule",
+        "body": "Hierarchy comes from Archivo's width and weight, not from a second display family: condensed to count, normal to read, expanded to label.",
+        "section": "typography"
+      },
+      {
+        "name": "The Code Is Mono Rule",
+        "body": "Mono is for code, tests and console output only, with ligatures disabled. UI text never borrows it for flavour.",
+        "section": "typography"
+      },
+      {
+        "name": "The Rule Beside Its Number Rule",
+        "body": "Every scoring rule is a row with its live value right-aligned in tabular figures; the explanation is a short line under the rule's name, never a paragraph.",
+        "section": "layout"
+      },
+      {
+        "name": "The Only the Case Rule",
+        "body": "At rest, the clock case is the only shadowed object on the board. Cards, panels and buttons stay flat; elevation is for overlays.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do take every neutral from the g0 to g8 ramp; use ink for primary text and g7 / g8 for muted and secondary text.",
+      "Do make the student's next move the single buff element in its group (Submit, Start, Ready, the selected option).",
+      "Do set every counted value in the condensed numeral (Archivo wdth 62%, 800, tabular-nums).",
+      "Do put a live number beside every scoring rule, right-aligned in tabular figures.",
+      "Do give every annotation mark its plain-words meaning as a tooltip and accessible name, and show the legend wherever marks are summarised.",
+      "Do draw new icons on the 24px grid with a 1.75 stroke, round caps and joins, `currentColor`.",
+      "Do use flag-text, brass and mint for text on green, and their washes (13% / 13% / 10%) for tinted rows.",
+      "Do keep the clock case black with buff faces wherever time, score or a room code is the point of the screen."
+    ],
+    "donts": [
+      "Don't introduce greys, slates or blues; the grey IDE-with-blue-accent shell is the explicit anti-reference.",
+      "Don't use flag red, brass or mint as decoration; each colour means one thing.",
+      "Don't shadow cards, panels or buttons at rest; the clock case is the only resting object with a shadow.",
+      "Don't use JetBrains Mono for UI text, and don't enable code ligatures.",
+      "Don't add a second display family or a second numeral style.",
+      "Don't use pill radius for buttons; pills are for tags and chips.",
+      "Don't use icon fonts, emoji or text glyphs as icons; the !! / ! / !? / ? marks are notation, not icons."
+    ]
+  }
+}

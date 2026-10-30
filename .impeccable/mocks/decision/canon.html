@@ -1,0 +1,21 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#1a1a1a;--p:#282828;--p2:#333;--ink:#eff1f6;--mut:#9a9a9a;--acc:#ffa116;--ok:#2cbb5d;--bad:#ef4743}
+*{box-sizing:border-box}html,body{margin:0;width:1440px;height:900px;overflow:hidden;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,sans-serif}
+.hdr{height:50px;display:flex;align-items:center;gap:16px;padding:0 16px;background:var(--p);border-bottom:1px solid #111}
+.brand{font-weight:700}.sp{flex:1}.timer{font:600 15px 'JetBrains Mono'}.btn{background:var(--p2);border-radius:6px;padding:6px 14px;color:var(--ink)}.pri{background:var(--ok);font-weight:600}
+.main{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px;height:850px}
+.pan{background:var(--p);border-radius:8px;overflow:hidden}.tabs{display:flex;gap:16px;padding:8px 14px;background:#303030;font-weight:600}.tabs .on{color:var(--ink)}.tabs span{color:var(--mut)}
+.body{padding:16px 20px}h1{font-size:22px;margin:0 0 10px}.pill{display:inline-block;font-size:12px;padding:2px 10px;border-radius:999px;background:rgba(44,187,93,.15);color:var(--ok);margin-right:6px}
+p{margin:12px 0}code{font:13px 'JetBrains Mono';background:var(--p2);padding:1px 6px;border-radius:4px}.ex{background:var(--p2);border-radius:6px;padding:10px 14px;margin:8px 0;font:13px 'JetBrains Mono'}
+.right{display:grid;grid-template-rows:1fr 240px;gap:8px;background:none}.ed{font:15px/1.7 'JetBrains Mono';padding:12px 0}.ln{display:grid;grid-template-columns:48px 1fr}.ln span:first-child{color:#666;text-align:right;padding-right:14px}.kw{color:#569cd6}.nm{color:#b5cea8}
+.res .body{font:13px 'JetBrains Mono'}.bad{color:var(--bad);font:600 18px system-ui;margin-bottom:8px}
+</style></head><body>
+<div class="hdr"><span class="brand">Code Duel</span><span style="color:var(--mut)">Bug Hunt · Easy</span><span class="sp"></span><span class="timer">02:57</span><span class="btn">Run</span><span class="btn pri">Submit</span></div>
+<div class="main">
+ <div class="pan"><div class="tabs"><span class="on">Description</span><span>Tests</span><span>Scoring</span></div><div class="body"><h1>BH-E01. Broken factorial</h1><span class="pill">Easy</span><span class="pill" style="background:#333;color:#aaa">loops</span><p>This code has one bug. <code>factorial(n)</code> should return n! for 0 ≤ n ≤ 15. Find and fix the bug.</p><div class="ex">Input: n = 3<br>Output: 6</div><div class="ex">Input: n = 1<br>Output: 1</div></div></div>
+ <div class="right"><div class="pan"><div class="tabs"><span class="on">Python §3</span></div><div class="ed"><div class="ln"><span>1</span><span><span class="kw">def</span> factorial(n):</span></div><div class="ln"><span>2</span><span>    result = <span class="nm">0</span></span></div><div class="ln"><span>3</span><span>    <span class="kw">for</span> i <span class="kw">in</span> range(<span class="nm">1</span>, n + <span class="nm">1</span>):</span></div><div class="ln"><span>4</span><span>        result = result * i</span></div><div class="ln"><span>5</span><span>    <span class="kw">return</span> result</span></div></div></div>
+ <div class="pan res"><div class="tabs"><span class="on">Test Result</span><span>Output</span></div><div class="body"><div class="bad">Wrong Answer</div>factorial(3): expected 6, got 0<br>factorial(1): expected 1, got 0</div></div></div>
+</div></body></html>

@@ -1,14 +1,16 @@
 // A practice opponent. It connects to the duel server like any player (Socket.IO,
 // same messages), so it also exercises the real protocol. It does not run code:
-// for each question it plans how long it "takes", how many test runs and wrong
-// submits it makes, and whether it solves it at all, from its level.
+// it works through the round's questions in order and, for each, plans how long
+// it "takes", how many test runs and wrong submits it makes, and whether it solves
+// it at all, from its level, until the round clock would run out.
 //
 // Used by the server ("Add bot" in the lobby) and by scripts/bot.mjs, which can
 // join a room on any server, e.g. one deployed on Render.
 import { io } from 'socket.io-client';
 import { randomBytes } from 'node:crypto';
 import { getQuestion, CATEGORIES, MODE_LABELS } from '../src/questions/index.js';
-import { resolveTests } from '../src/judge/resolve.js';
+import { resolveTests, startingCode, linesChanged, LANG_FAMILY } from '../src/judge/resolve.js';
+import { timeLimitFor } from '../src/state/engine.js';
 
 export const BOT_LEVELS = {
   easy: {
@@ -18,7 +20,6 @@ export const BOT_LEVELS = {
     pace: [0.45, 0.85], // share of the time limit it takes to solve
     testRuns: [1, 3],
     wrongSubmits: [0, 2],
-    extraLineChance: 0.5, // Bug Hunt: chance to change one line more than par
   },
   medium: {
     label: 'Medium',
@@ -27,7 +28,6 @@ export const BOT_LEVELS = {
     pace: [0.25, 0.6],
     testRuns: [1, 2],
     wrongSubmits: [0, 1],
-    extraLineChance: 0.2,
   },
   hard: {
     label: 'Hard',
@@ -36,7 +36,6 @@ export const BOT_LEVELS = {
     pace: [0.1, 0.35],
     testRuns: [0, 1],
     wrongSubmits: [0, 1],
-    extraLineChance: 0,
   },
 };
 
@@ -69,11 +68,10 @@ export function startBot({ url, code, level = 'medium', token, name, speed = 1, 
   let joined = false;
   let stopped = false;
   let delta = 0; // our clock - server clock
-  let planned = ''; // "round:index" of the question we have planned
-  let movedOn = ''; // "round:index" we already pressed Next for
+  let planned = 0; // the round we have planned
   let lastPick = ''; // the pick state we last answered
   let roundOver = 0; // the last round we said gg for
-  let theirSolved = new Map(); // opponent id -> solved count
+  let theirSolved = new Map(); // other side -> solved count
   let resolveDone;
   const done = new Promise((r) => { resolveDone = r; });
 
@@ -140,7 +138,6 @@ export function startBot({ url, code, level = 'medium', token, name, speed = 1, 
   });
 
   function onLobby() {
-    planned = '';
     const me = room.players.find((p) => p.id === room.youId);
     const { pickerId, votes } = room.pick;
     const mustPick = (pickerId === null || pickerId === me.id) && !votes[me.id];
@@ -164,78 +161,104 @@ export function startBot({ url, code, level = 'medium', token, name, speed = 1, 
     const s = me?.state;
     if (!s) return;
 
-    // React to the other player's progress.
+    // React to the other sides' progress.
     for (const p of room.players) {
-      if (p.id === me.id || !p.state) continue;
-      const solved = p.state.results.filter((r) => r.solved).length;
-      if (solved > (theirSolved.get(p.id) ?? 0)) chat(pick(LINES.theySolved), 0.5);
-      theirSolved.set(p.id, solved);
+      if (p.side === me.side || !p.state) continue;
+      const solved = p.state.qs.filter((q) => q.status === 'solved').length;
+      if (solved > (theirSolved.get(p.side) ?? 0)) chat(pick(LINES.theySolved), 0.4);
+      theirSolved.set(p.side, solved);
     }
 
     if (room.status === 'finished') {
       if (roundOver !== room.round) {
         roundOver = room.round;
         theirSolved = new Map();
-        chat(room.lastWinnerId === me.id ? pick(LINES.win) : room.lastWinnerId ? pick(LINES.lose) : pick(LINES.draw));
+        const won = room.lastWinnerSide === me.side;
+        chat(won ? pick(LINES.win) : room.lastWinnerSide ? pick(LINES.lose) : pick(LINES.draw));
       }
       return;
     }
-    if (s.status !== 'playing') return;
-
-    const key = `${room.round}:${s.index}`;
-    if (s.current.status !== 'playing') {
-      if (movedOn !== key) {
-        movedOn = key;
-        later(1500 + Math.random() * 2500, () => act('next'));
-      }
-      return;
-    }
-    if (planned === key) return;
-    planned = key;
+    if (s.status !== 'playing' || planned === room.round) return;
+    planned = room.round;
     clearPlans();
-    planQuestion(s);
+    planRound(s);
   }
 
-  /** Schedules this question's test runs, wrong submits and (maybe) the solve. */
-  function planQuestion(s) {
-    const c = s.current;
-    const q = getQuestion(c.questionId);
-    const tests = resolveTests(q, s.config.lang);
-    const visible = tests.filter((t) => !t.hidden).length;
-    const total = tests.length;
-    const limitMs = c.timeLimitSec * 1000;
-    const startIn = c.startedAt + delta - Date.now(); // the countdown, if any
-    const solves = Math.random() < cfg.solve[c.difficulty];
-    const finishAt = solves ? between(cfg.pace) * limitMs : 0.9 * limitMs;
+  /**
+   * Plans the whole round: the questions in order, each taking a share of its usual
+   * time limit, with test runs, wrong submits and (maybe) a solve, until the round
+   * clock would run out.
+   */
+  function planRound(s) {
+    const startIn = s.startedAt + delta - Date.now(); // the countdown, if any
     // later() divides by speed; the countdown is real time, so undo that for it.
-    const at = (share) => startIn * speed + share * finishAt;
+    const at = (ms) => startIn * speed + ms;
+    const roundMs = s.durationSec * 1000;
+    let t = 0;
+    for (const meta of s.questions) {
+      const q = getQuestion(meta.id);
+      const limitMs = timeLimitFor(q) * 1000;
+      const solves = Math.random() < cfg.solve[q.difficulty];
+      const spend = solves ? between(cfg.pace) * limitMs : 0.6 * limitMs;
+      if (t + spend > roundMs * 0.97) break;
+      planQuestion(s, q, (share) => at(t + share * spend), solves);
+      t += spend + 1500 + Math.random() * 2500;
+    }
+    // Nothing left it can do: stop, so nobody waits for the clock on its account.
+    later(at(Math.min(t, roundMs * 0.98)), () => act('finish'));
+  }
+
+  /** One question's moves; when(share) is the time a share of the way through it. */
+  function planQuestion(s, q, when, solves) {
+    const id = q.id;
+    const tests = resolveTests(q, s.config.lang);
+    const visible = tests.filter((x) => !x.hidden).length;
+    const total = tests.length;
+    // The server re-runs some tests of a solve, so the bot submits real code: the
+    // reference solution, or the starting code for its wrong attempts.
+    const solution = q.solution[LANG_FAMILY[s.config.lang]];
+    const starting = startingCode(q, s.config.lang);
+    later(when(0), () => socket.emit('duel:view', { questionId: id }));
+
+    // Line counts and code, as a player's editor would send them: the solution
+    // appearing a line at a time (Code Race), or the buggy code until the fix (Bug Hunt).
+    // At test speeds these would only eat the server's event budget.
+    if (speed <= 5) {
+      const count = (code) => code.split('\n').filter((l) => l.trim()).length;
+      const [from, to] = q.mode === 'bug-hunt' ? [0, linesChanged(starting, solution)] : [count(starting), count(solution)];
+      for (const share of [0.15, 0.4, 0.65, 0.9]) {
+        const lines = Math.round(from + (to - from) * Math.min(1, share * (solves ? 1.1 : 0.8)));
+        later(when(share), () => socket.emit('duel:progress', { questionId: id, lines }));
+      }
+      const rows = solution.split('\n');
+      const steps = Math.min(rows.length, 12);
+      for (let i = 0; i <= steps; i++) {
+        const share = 0.05 + (i / steps) * (solves ? 0.85 : 0.75);
+        const code = q.mode === 'bug-hunt' || i === 0 ? starting : rows.slice(0, Math.ceil((i / steps) * rows.length)).join('\n');
+        later(when(share), () => socket.emit('duel:code', { questionId: id, code }));
+      }
+      if (solves && q.mode === 'bug-hunt') later(when(0.95), () => socket.emit('duel:code', { questionId: id, code: solution }));
+    }
 
     const runs = intBetween(cfg.testRuns);
     for (let i = 1; i <= runs; i++) {
       const share = (i / (runs + 1)) * 0.8;
       const passed = Math.min(visible, Math.round(visible * share * (solves ? 1.2 : 0.8)));
-      later(at(share), () => act('testRun', { questionId: c.questionId, passed, total: visible }));
+      later(when(share), () => act('testRun', { questionId: id, passed, total: visible }));
     }
     const wrong = intBetween(cfg.wrongSubmits);
     for (let i = 1; i <= wrong; i++) {
       const share = 0.8 + (i / (wrong + 1)) * 0.15;
       const passed = Math.max(0, total - 1 - Math.floor(Math.random() * Math.max(1, total / 2)));
-      later(at(share), () => act('submitResult', {
-        questionId: c.questionId, passedVisible: Math.min(visible, passed), passedHidden: Math.max(0, passed - visible), total, timeMs: 30,
+      later(when(share), () => act('submitResult', {
+        questionId: id, passedVisible: Math.min(visible, passed), passedHidden: Math.max(0, passed - visible), total, timeMs: 30, code: starting,
       }));
     }
     if (solves) {
-      const extra = c.par !== null && Math.random() < cfg.extraLineChance ? 1 : 0;
-      later(at(1), () => {
-        act('submitResult', {
-          questionId: c.questionId, passedVisible: visible, passedHidden: total - visible, total, timeMs: 30,
-          linesChanged: c.par !== null ? c.par + extra : undefined,
-        });
+      later(when(1), () => {
+        act('submitResult', { questionId: id, passedVisible: visible, passedHidden: total - visible, total, timeMs: 30, code: solution });
         chat(pick(LINES.iSolved), 0.3);
       });
-    } else {
-      // Give up shortly before the time runs out.
-      later(at(1), () => act('skip'));
     }
   }
 

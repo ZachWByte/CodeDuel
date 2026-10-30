@@ -14,6 +14,18 @@ import codeRaceClassic4 from './code-race-classic-4.js';
 import bugHuntClassic4 from './bug-hunt-classic-4.js';
 import codeRaceClassic5 from './code-race-classic-5.js';
 import bugHuntClassic5 from './bug-hunt-classic-5.js';
+import codeRaceClassic6 from './code-race-classic-6.js';
+import bugHuntClassic6 from './bug-hunt-classic-6.js';
+import codeRaceClassic7 from './code-race-classic-7.js';
+import bugHuntClassic7 from './bug-hunt-classic-7.js';
+import codeRaceClassic8 from './code-race-classic-8.js';
+import bugHuntClassic8 from './bug-hunt-classic-8.js';
+import codeRaceClassic9 from './code-race-classic-9.js';
+import bugHuntClassic9 from './bug-hunt-classic-9.js';
+import codeRaceClassic10 from './code-race-classic-10.js';
+import bugHuntClassic10 from './bug-hunt-classic-10.js';
+import codeRaceClassic11 from './code-race-classic-11.js';
+import bugHuntClassic11 from './bug-hunt-classic-11.js';
 
 export const ALL_QUESTIONS = [
   ...codeRaceEasy, ...codeRaceMedium, ...codeRaceHard,
@@ -23,6 +35,12 @@ export const ALL_QUESTIONS = [
   ...codeRaceClassic3, ...bugHuntClassic3,
   ...codeRaceClassic4, ...bugHuntClassic4,
   ...codeRaceClassic5, ...bugHuntClassic5,
+  ...codeRaceClassic6, ...bugHuntClassic6,
+  ...codeRaceClassic7, ...bugHuntClassic7,
+  ...codeRaceClassic8, ...bugHuntClassic8,
+  ...codeRaceClassic9, ...bugHuntClassic9,
+  ...codeRaceClassic10, ...bugHuntClassic10,
+  ...codeRaceClassic11, ...bugHuntClassic11,
 ];
 
 const byId = new Map(ALL_QUESTIONS.map((q) => [q.id, q]));

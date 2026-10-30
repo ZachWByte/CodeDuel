@@ -93,3 +93,31 @@ export function onChat(fn, fnLog) {
     s.off('duel:chatlog', fnLog);
   };
 }
+
+/** fn({ questionId, message }) when the server rejected a solve after re-running the code. */
+export function onVerify(fn) {
+  const s = connection();
+  s.on('duel:verify', fn);
+  return () => s.off('duel:verify', fn);
+}
+
+/** fn({ playerId, questionId, locked, code }) when what you can see of an opponent's code changes. */
+export function onWatch(fn) {
+  const s = connection();
+  s.on('duel:watch', fn);
+  return () => s.off('duel:watch', fn);
+}
+
+/** fn({ questionId, from, updates }) for teammates' edits to a shared document. -> stop() */
+export function onTeamUpdates(fn) {
+  const s = connection();
+  s.on('team:updates', fn);
+  return () => s.off('team:updates', fn);
+}
+
+/** fn({ playerId, name, team, questionId, pos }) when a teammate's cursor moves. -> stop() */
+export function onTeamCursor(fn) {
+  const s = connection();
+  s.on('team:cursor', fn);
+  return () => s.off('team:cursor', fn);
+}

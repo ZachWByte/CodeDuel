@@ -1,7 +1,8 @@
-// The ⚙ View panel (editor side, zoom, font size, wrapping), its keyboard
+// The View panel (editor side, zoom, font size, wrapping), its keyboard
 // shortcuts, and the draggable divider between the problem and the editor.
 import { h, setChildren, segmented, toast } from './dom.js';
 import { getPrefs, setPrefs, stepPref, onPrefs, LIMITS, DEFAULT_PREFS } from '../state/prefs.js';
+import { icon } from './icons.js';
 
 let panel = null;
 
@@ -18,9 +19,9 @@ function drawPanel() {
   setChildren(panel,
     h('div.view-head', {},
       h('strong', {}, 'View'),
-      h('button.btn.btn-ghost.btn-small', { type: 'button', 'aria-label': 'Close', onclick: closePanel }, '✕')),
+      h('button.btn.btn-ghost.btn-small', { type: 'button', 'aria-label': 'Close', onclick: closePanel }, icon('close'))),
     h('div.view-row', {}, h('span', {}, 'Editor side'),
-      segmented('Editor side', [['left', '◧ Left'], ['right', 'Right ◨']], p.editorSide, (editorSide) => setPrefs({ editorSide }))),
+      segmented('Editor side', [['left', 'Left'], ['right', 'Right']], p.editorSide, (editorSide) => setPrefs({ editorSide }))),
     h('div.view-row', {}, h('span', {}, 'Zoom'),
       stepper('zoom', p.zoom, (d) => stepPref('zoom', d), { atMin: p.zoom <= zoom.min, atMax: p.zoom >= zoom.max, unit: '%' })),
     h('div.view-row', {}, h('span', {}, 'Editor font'),
@@ -64,13 +65,14 @@ function openPanel() {
   panel.querySelector('.seg')?.focus();
 }
 
-/** The ⚙ button that opens and closes the panel. */
-export function viewButton() {
+/** The View button that opens and closes the panel. */
+export function viewButton({ compact = false } = {}) {
   return h('button.btn.btn-ghost.btn-small.btn-view', {
     type: 'button',
     title: 'View settings: editor side, zoom, font size',
+    'aria-label': compact ? 'View settings' : undefined,
     onclick: () => (panel ? closePanel() : openPanel()),
-  }, '⚙ View');
+  }, icon('gear'), compact ? null : 'View');
 }
 
 /** Keeps the panel in sync and adds the Alt zoom shortcuts. Call once at boot. */

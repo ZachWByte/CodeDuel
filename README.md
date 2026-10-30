@@ -2,7 +2,7 @@
 
 A browser coding game for **Source Academy Python**. Pick **Python §3**, **Python §4**
 or **Python (full)**, a mode (**Code Race** or **Bug Hunt**) and a difficulty, then
-race the clock through questions from a bank of 275, or duel a friend (or a bot) online. All code runs in the browser, in
+race the clock through questions from a bank of 542, or duel a friend (or a bot) online. All code runs in the browser, in
 Web Workers:
 
 - **Python §3 / §4** run on [py-slang](https://github.com/source-academy/py-slang)
@@ -24,31 +24,32 @@ npm run dev        # http://localhost:5173
 | `npm run dev` | Dev server (with the COOP/COEP headers Pyodide needs) |
 | `npm run build` / `npm start` | Production build in `dist/`, and the Node server (game + duel rooms) that Render runs |
 | `npm run preview` | Vite's local server for the build |
-| `npm run validate` | Checks all 275 questions: schema, reference solutions in every language (§3 and §4 through py-slang, full Python through `python3`), starters fail, buggy code fails a visible and a secret test, §4-only questions really need §4, banned names, highlighted bug lines, counts. Add id prefixes to check a subset: `npm run validate -- BH-M CR-H05` |
-| `npm test` | Unit tests for the game engine, the judge helpers and the duel server (including a full match against a bot) |
+| `npm run validate` | Checks all 542 questions: schema, reference solutions in every language (§3 and §4 through py-slang, full Python through `python3`), starters fail, buggy code fails a visible and a secret test, §4-only questions really need §4, banned names, highlighted bug lines, counts. Add id prefixes to check a subset: `npm run validate -- BH-M CR-H05` |
+| `npm test` | Unit tests for the solo and round engines, the judge helpers, team editing (concurrent edits converge) and the duel server (including teams and a full match against a bot) |
 | `npm run bot -- ABCD [easy\|medium\|hard]` | Joins room ABCD as a bot opponent. Options: `--url` (default `http://localhost:5173`, or your Render URL) and `--speed` (e.g. `--speed 20` to play 20× faster when testing) |
 
 ## Languages and the question bank
 
 | Language | Questions | Notes |
 |---|---|---|
-| Python §4 | 275 | everything, including the 5 `parse` questions |
-| Python §3 | 270 | all but the 5 `parse` questions, which need §4 |
-| Python (full) | 265 | the 10 questions that need Source Academy features (`set_tail` cycles, streams, `parse`) are Python § only |
+| Python §4 | 542 | everything, including the 5 `parse` questions |
+| Python §3 | 537 | all but the 5 `parse` questions, which need §4 |
+| Python (full) | 532 | the 10 questions that need Source Academy features (`set_tail` cycles, streams, `parse`) are Python § only |
 
 Each question stores one program per *family*: `sicpy` (Python §, written SICP-style with
 `llist`, `pair`, `head`, `tail`, `None` as the empty list, `[...]` as arrays) and `python`
 (normal Python lists and tuples). Tests are written once with the helpers in
 `src/questions/helpers.js`, which produce `llist(1, 2)` for Python § and `[1, 2]` for full Python.
 
-`code-race-classic*.js` and `bug-hunt-classic*.js` (five batches) add 175 classic
+`code-race-classic*.js` and `bug-hunt-classic*.js` (seven batches) add 279 classic
 contest/interview problems: the ideas behind well-known LeetCode and Codeforces tasks,
 written fresh. They include climbing stairs, house robber (in a line and in a circle), coin
 change, Kadane, decode ways, dice sums, egg drop, integer partitions, Catalan numbers, rod
 cutting, matrix-chain order, edit-style string DP, trapping rain water, largest rectangle,
 sliding-window maximum, daily temperatures, Reverse Polish notation, binary search
 variants, counting inversions with merge sort, fast LIS, islands, word search, spiral order,
-array-stored heaps and trees, greedy scheduling, and many warm-ups. Most have a Bug Hunt
+array-stored heaps and trees, greedy scheduling, Pascal's triangle, and over a hundred warm-ups
+(fizz buzz, factorial, digit puzzles, letter arrays, matrix diagonals). Most have a Bug Hunt
 twin with a single, realistic bug. Their inputs are arrays, so one program works in Python §
 and full Python.
 
@@ -80,7 +81,7 @@ src/runners/python.*       Pyodide worker + harness shared with the validator
 src/runners/runner.js      the runner interface (one long-lived worker per engine)
 src/judge/                 resolving tests per language, banned names, judging
 src/questions/             the question bank
-src/ui/                    home, game, results, duel lobby and duel results screens
+src/ui/                    home, solo game, duel round (round-game.js), results, lobby and duel results screens
 src/duel.js, src/net/      duel flow and the Socket.IO client
 server/                    duel rooms (duel.js), the bot (bot.js) and the production server (index.js)
 scripts/                   Pyodide copy step, the question validator and the bot launcher
@@ -121,30 +122,56 @@ On the home screen, **Play a friend** creates a room (language, difficulty and q
 per round come from the settings above) and shows a 4-letter code and a link
 (`/?room=CODE`). **🤖 Play a bot** creates a room with a practice bot in it.
 
-- **Lobby:** names, who is ready, the match score and a chat. The host can change the
-  room settings and add or remove a bot (easy, medium or hard).
+- **Lobby:** up to 6 players, who is ready, the match score and a chat. The host sets
+  the language, difficulty, number of questions and three round options, and can add
+  or remove bots (easy, medium or hard). Everyone sees the same settings; only the host
+  can change them:
+  - **Round time** (5–60 minutes): one clock for the whole round. Every question is
+    open at once, and players move between them freely with the tabs along the bottom.
+  - **Secret tests:** only a solve scores, or each secret test passed earns points
+    (up to half the question) without a solve. The best submit counts.
+  - **Reveal a failed test:** off, or allowed for 10%, 25% or 50% of the question's
+    base points each. A revealed secret test shows its call and expected value (and what
+    your code gave) and lowers the most the question can score.
+- **Teams:** each player plays on their own or picks red, green or blue. Teammates are
+  one side: one score, one state, and one live editor per question, with each other's
+  cursors. A submit from any teammate counts for the team. A Room / Team switch by the
+  chat box sends messages to the team only.
 - **Choosing the round:** the first round is a vote on the mode (Code Race, Bug Hunt or
   random) and the topic (one of six categories, or random). If the votes differ, a coin
-  flip decides. After that, **the loser of each round chooses the next one**. After a
-  draw, the players vote again.
-- **Playing:** when everyone is ready there is a 3-second countdown, then everyone gets the
-  same questions on the same clock. The header shows each opponent's question, their last
-  test run (✓ 2/3), their score and your lead. Toasts warn you when they pass more tests,
-  pass all the visible tests, submit, solve a question or finish.
-- **Results:** the higher total wins the round and a point in the match. Anyone can start
-  the next round.
+  flip decides. After that, **the last-placed side chooses the next one**. After a
+  draw, everyone votes again.
+- **Playing:** when everyone is ready there is a 3-second countdown, then every side gets
+  the same questions on the same clock. Under each question's title, "Worth up to N now"
+  shows the most it can still score and what wrong submits, test runs, reveals and
+  extra lines have cost. A side's round ends when the clock runs out, when it has solved
+  everything, or when it presses Finish.
+- **Leaderboard:** the side panel ranks every side live (rows slide when the order
+  changes), with what each is working on; the header shows your place and the gap.
+  Toasts announce other sides' solves.
+- **Watching:** Watch (in the header, or after a solve) turns the work area into a view
+  of the other players' code, following the question each one has open. It is
+  scrambled (same lines and indentation, every character replaced) until your side has
+  solved that question or your round is over; the server never sends the real code
+  before then. On the results screen you can watch the others finish.
+- **Results:** final standings, and every side's score per question. The top side wins
+  the round, and each of its players gets a point in the match.
 - **Chat:** open in the lobby and on the results screen. During a round it folds into a
-  button with an unread count and a short preview of new messages. It includes quick
-  reactions and round announcements.
+  side panel (with the leaderboard) behind a button with an unread count.
 
-- `server/duel.js` runs the rooms over Socket.IO. It uses `state/engine.js` as the
-  referee: it keeps every player's state and owns the clock. Code still runs in each
-  browser, and the server trusts the test results the browser reports.
-- `src/duel.js` follows the room snapshots and shows the lobby, the game or the duel results.
+- `server/duel.js` runs the rooms over Socket.IO. It uses `state/round.js` as the
+  referee: it keeps every side's state and owns the clock. Code still runs in each
+  browser, and the server trusts the test results the browser reports (claimed solves
+  in Python § are spot-checked).
+- `server/collab.js` keeps each team's shared documents; `src/editor/collab.js` is the
+  browser side (local edits are rebased on teammates', as in `@codemirror/collab`).
+- `src/duel.js` follows the room snapshots and shows the lobby, the round
+  (`ui/round-game.js`) or the duel results.
 - `server/bot.js` is the practice opponent. It connects over Socket.IO like a real player
-  (so it also tests the protocol) and plays from a plan. Its level sets how likely it is
-  to solve each difficulty, how fast it is, and how many test runs and wrong submits it
-  makes. It votes, gets ready, and chats ("nice one 👏", "gg"). It does not run code.
+  (so it also tests the protocol) and plays the round's questions in order from a plan.
+  Its level sets how likely it is to solve each difficulty, how fast it is, and how many
+  test runs and wrong submits it makes. It votes, gets ready, and chats ("nice one 👏",
+  "gg"). It does not run code.
 - Each browser tab is its own player (the seat token is in `sessionStorage`), and a
   reload rejoins the same seat.
 
@@ -174,11 +201,18 @@ build and start commands.
   in the chat; players are sent back to the home screen when it is back.
 - A player who is disconnected for more than 60 seconds leaves the room (and forfeits
   the round), so a closed tab never leaves the other player waiting.
-- Protections for a public server: same-origin browsers only, messages of at most 16 KB,
+- Protections for a public server: same-origin browsers only, messages of at most 64 KB,
   20 events per second per connection, 20 connections per IP address, 1000 rooms, and
-  reported test counts must match the question (so a console one-liner cannot claim a
-  solve). Results are still reported by the browser, so a determined player could cheat;
-  it is meant for playing people you know.
+  reported test counts must match the question.
+- **Solves are spot-checked on the server** (`server/verify.js`). In Python §3/§4 a
+  submit that claims every test passes must include the code; the server re-runs 2 of
+  the tests (secret ones first) with py-slang in a worker thread and turns the solve
+  into a wrong submit if any fail. py-slang cannot touch files, the network or the
+  machine, and the worker has the same 3-million-step limit as the browser, a 128 MB
+  memory cap and a 45-second budget, so infinite loops and memory bombs only fail the
+  submit. The player's clock pauses during the check. Bug Hunt "lines changed" is
+  counted from the code too. Full Python is not re-run (untrusted CPython on the server
+  would not be safe), so there the browser's result is still trusted.
 - On the free plan the service sleeps after about 15 minutes idle, and the first visit
   after that takes a minute or so to wake it.
 # CodeDuel

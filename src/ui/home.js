@@ -4,6 +4,7 @@ import { filterQuestions, LANG_LABELS, LANG_DOCS, MODE_LABELS, DIFFICULTY_LABELS
 import { loadSettings, saveSettings, loadBest, loadSessionBest, loadName, saveName } from '../state/storage.js';
 import { warmUp } from '../runners/runner.js';
 import { viewButton } from './view-settings.js';
+import { icon, brandMark, clockCase } from './icons.js';
 
 export const COUNTS = [1, 3, 5, 10];
 
@@ -31,43 +32,47 @@ export function renderHome(root, { onStart, onPractice, onCreateDuel, onBotDuel,
 
     setChildren(root, h('div.home', {},
       h('header.home-header', {},
-        viewButton(),
-        h('h1', {}, h('span.logo', {}, '{ }'), ' Code Duel'),
-        h('p.tagline', {}, 'Race the clock. Write it, or find the bug.')),
+        h('h1.brand', {}, brandMark(), h('span.brand-name', {}, 'Code Duel')),
+        h('p.tagline', {}, 'Race the clock. Write it, or find the bug.'),
+        viewButton()),
 
-      h('section.setup.card', {},
-        h('div.field', {}, h('label', {}, 'Language'),
-          segmented('Language', Object.entries(LANG_LABELS), settings.lang, (lang) => update({ lang }))),
-        h('div.mode-help', {}, LANG_DOCS[settings.lang]
-          ? ['Source Academy ', LANG_LABELS[settings.lang], ' — ', h('a', { href: LANG_DOCS[settings.lang], target: '_blank', rel: 'noopener' }, 'language reference ↗')]
-          : 'Standard Python 3 (runs with Pyodide).'),
-        h('div.field', {}, h('label', {}, 'Mode'),
-          segmented('Mode', Object.entries(MODE_LABELS), settings.mode, (mode) => update({ mode }))),
-        h('div.mode-help', {}, settings.mode === 'code-race'
-          ? 'Code Race: write a function from scratch that passes every test.'
-          : 'Bug Hunt: each program has exactly one bug. Find it and fix it.'),
-        h('div.field', {}, h('label', {}, 'Difficulty'),
-          segmented('Difficulty', Object.entries(DIFFICULTY_LABELS), settings.difficulty, (difficulty) => update({ difficulty }))),
-        h('div.field', {}, h('label', {}, 'Questions'),
-          segmented('Questions per session', COUNTS.map((c) => [c, String(c)]), settings.count, (count) => update({ count }))),
-        h('div.start-row', {},
-          h('div.available', {},
-            h('strong', {}, `${n} question${n === 1 ? '' : 's'} available`),
-            n > 0 && n < settings.count ? h('span.muted', {}, ` · the session will use all ${n}`) : null,
-            best !== null ? h('span.muted', {}, ` · personal best ${best}`) : null),
-          h('button.btn.btn-primary.btn-large#start', {
-            disabled: n === 0,
-            onclick: () => onStart({ ...settings }),
-          }, 'Start ▸'))),
+      h('div.home-grid', {},
+        h('section.setup.card', { 'aria-label': 'Solo game' },
+          h('h2.card-title', {}, icon('clock'), 'Play solo'),
+          h('div.field', {}, h('label', {}, 'Language'),
+            segmented('Language', Object.entries(LANG_LABELS), settings.lang, (lang) => update({ lang }))),
+          h('div.mode-help', {}, LANG_DOCS[settings.lang]
+            ? ['Source Academy ', LANG_LABELS[settings.lang], ' · ', h('a', { href: LANG_DOCS[settings.lang], target: '_blank', rel: 'noopener' }, 'language reference', icon('external'))]
+            : 'Standard Python 3 (runs with Pyodide).'),
+          h('div.field', {}, h('label', {}, 'Mode'),
+            segmented('Mode', Object.entries(MODE_LABELS), settings.mode, (mode) => update({ mode }))),
+          h('div.mode-help', {}, settings.mode === 'code-race'
+            ? 'Code Race: write a function from scratch that passes every test.'
+            : 'Bug Hunt: each program has exactly one bug. Find it and fix it.'),
+          h('div.field', {}, h('label', {}, 'Difficulty'),
+            segmented('Difficulty', Object.entries(DIFFICULTY_LABELS), settings.difficulty, (difficulty) => update({ difficulty }))),
+          h('div.field', {}, h('label', {}, 'Questions'),
+            segmented('Questions per session', COUNTS.map((c) => [c, String(c)]), settings.count, (count) => update({ count }))),
+          h('div.start-row', {},
+            h('div.available', {},
+              clockCase([
+                ['available', String(n), { lit: true }],
+                ['best', best !== null ? String(best) : '—'],
+              ]),
+              n > 0 && n < settings.count ? h('span.note', {}, `The session will use all ${n}.`) : null),
+            h('button.btn.btn-primary.btn-large#start', {
+              disabled: n === 0,
+              onclick: () => onStart({ ...settings }),
+            }, 'Start', icon('chevron')))),
 
-      drawDuel(),
+        drawDuel()),
 
       h('section.card.browser', {},
         h('button.browser-toggle', {
           type: 'button',
           'aria-expanded': String(browser.open),
           onclick: () => { browser.open = !browser.open; draw(); },
-        }, `${browser.open ? '▾' : '▸'} Question browser · ${LANG_LABELS[settings.lang]}`),
+        }, icon('chevron'), 'Question browser', h('span.muted', {}, LANG_LABELS[settings.lang])),
         browser.open ? drawBrowser() : null),
 
       h('footer.home-footer', {},
@@ -107,41 +112,41 @@ export function renderHome(root, { onStart, onPractice, onCreateDuel, onBotDuel,
     const botBtn = h('button.btn#duel-bot', {
       title: 'A room with a medium practice bot in it (you can change its level in the room)',
       onclick: () => act((name) => onBotDuel({ ...settings }, name)),
-    }, '🤖 Play a bot');
+    }, icon('bot'), 'Play a bot');
     const joinBtn = h('button.btn#duel-join', {
       onclick: () => act((name) => onJoinDuel(duel.code, name)),
     }, 'Join');
     buttons.push(createBtn, botBtn, joinBtn);
 
-    return h('section.card.duel-card', {},
-      h('h2.card-title', {}, '⚔ Play a friend'),
-      h('p.muted.small', {}, 'Create a room with the language, difficulty and question count above, and send your friend the code. You vote on the mode and topic, play the same questions on the same clock, and chat. The loser of each round picks the next one.'),
-      h('div.duel-row', {},
-        h('label.muted', { for: 'duel-name' }, 'Your name'),
+    return h('section.card.duel-card', { 'aria-label': 'Play a friend' },
+      h('h2.card-title', {}, icon('duel'), 'Play a friend'),
+      h('p.duel-intro', {}, 'Create a room with your Play solo language, difficulty and question count, and send your friend the code. You vote on the mode and topic, play the same questions on the same clock, and chat. The loser of each round picks the next one.'),
+      h('div.duel-fields', {},
+        h('label', { for: 'duel-name' }, 'Your name'),
         h('input#duel-name', {
           maxlength: 20,
           placeholder: 'Name',
           value: duel.name,
           oninput: (e) => { duel.name = e.target.value; },
         }),
-        createBtn, botBtn),
-      h('div.duel-row', {},
-        h('label.muted', { for: 'duel-code' }, 'Room code'),
-        h('input#duel-code.code-input', {
-          maxlength: 4,
-          placeholder: 'ABCD',
-          autocomplete: 'off',
-          value: duel.code,
-          oninput: (e) => { duel.code = e.target.value.toUpperCase(); e.target.value = duel.code; },
-          onkeydown: (e) => { if (e.key === 'Enter') joinBtn.click(); },
-        }),
-        joinBtn),
+        h('label', { for: 'duel-code' }, 'Room code'),
+        h('div.join-row', {},
+          h('input#duel-code.code-input', {
+            maxlength: 4,
+            placeholder: 'ABCD',
+            autocomplete: 'off',
+            value: duel.code,
+            oninput: (e) => { duel.code = e.target.value.toUpperCase(); e.target.value = duel.code; },
+            onkeydown: (e) => { if (e.key === 'Enter') joinBtn.click(); },
+          }),
+          joinBtn)),
+      h('div.duel-actions', {}, createBtn, botBtn),
       errorEl);
   }
 
   function drawBrowser() {
     const listEl = h('div.browser-list', {});
-    const countEl = h('p.muted.small', {});
+    const countEl = h('p.muted.small', { 'aria-live': 'polite' });
 
     const fill = () => {
       const text = browser.text.trim().toLowerCase();
@@ -161,7 +166,7 @@ export function renderHome(root, { onStart, onPractice, onCreateDuel, onBotDuel,
           h('span.qtitle', {}, q.title),
           h('span.tag', {}, q.topic),
           h(`span.diff.diff-${q.difficulty}`, {}, DIFFICULTY_LABELS[q.difficulty]),
-          h('span.best', {}, best ? `★ ${best.points}` : ''));
+          h('span.best', { title: best ? 'Your best score on this question' : undefined }, best ? `Best ${best.points}` : ''));
       }) : [h('p.muted', {}, 'No questions match.')]));
     };
 
