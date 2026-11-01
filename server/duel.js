@@ -33,6 +33,8 @@
 //   duel:power { type: 'keyboard', targetId }  (mouse keys on one opponent)
 //   duel:hint { questionId, kind: 'outline' | 'lines' } -> { ok, hint }
 //   duel:extend { minutes }       ask everyone for more time;  duel:extendVote { yes }
+//   duel:review -> { questions: [{ id, answers: [{ side, name, team, you, status, points, code }] }] }
+//                 (once your round is over: every side's final code on every question)
 //   duel:view { questionId }      (the question you have open, for spectators and teammates)
 //   duel:progress { questionId, lines }  (lines of code in the editor, sent every few seconds at most)
 //   duel:code { questionId, code }       (your code, about once a second while it changes; not in a team)
@@ -95,7 +97,7 @@ import { createVerifier, VERIFY_LANGS } from './verify.js';
 import { ChangeSet } from '@codemirror/state';
 import { createDoc, docString, docVersion, pushUpdates, updatesSince } from './collab.js';
 import { nextHint, HINT_KINDS } from './hints.js';
-import { pickQuestions } from '../src/questions/pick.js';
+import { pickQuestions, pickSlots, SLOT_LEVELS } from '../src/questions/pick.js';
 import { startBot, BOT_LEVELS } from './bot.js';
 import { attachAdmin } from './admin.js';
 import { createSolutionStore } from './solutions.js';
@@ -182,12 +184,15 @@ const randomOf = (xs) => xs[Math.floor(Math.random() * xs.length)];
 const newSalt = () => randomBytes(4).readUInt32LE(0);
 
 /**
- * Room settings: { lang, difficulty, count, minutes, partial, revealCost, powerups }.
- * The mode and topic are chosen per round. Missing round options take their
- * defaults; power-ups are off unless set.
+ * Room settings: { lang, difficulty, count, minutes, partial, revealCost, powerups },
+ * plus levels (one per question: easy / medium / hard / mixed) when difficulty is
+ * 'custom'. The mode and topic are chosen per round. Missing round options take
+ * their defaults; power-ups are off unless set.
  */
 export function validConfig(c) {
-  if (!c || !has(LANG_LABELS, c.lang) || !has(DIFFICULTY_LABELS, c.difficulty) || !COUNTS.includes(c.count)) return null;
+  const custom = c?.difficulty === 'custom';
+  if (!c || !has(LANG_LABELS, c.lang) || !(custom || has(DIFFICULTY_LABELS, c.difficulty)) || !COUNTS.includes(c.count)) return null;
+  if (custom && !(Array.isArray(c.levels) && c.levels.length === c.count && c.levels.every((l) => SLOT_LEVELS.includes(l)))) return null;
   const minutes = c.minutes === undefined ? DEFAULT_ROUND.minutes : c.minutes;
   const revealCost = c.revealCost === undefined ? DEFAULT_ROUND.revealCost : c.revealCost;
   if (!ROUND_MINUTES.includes(minutes) || !REVEAL_COSTS.includes(revealCost)) return null;
@@ -197,7 +202,9 @@ export function validConfig(c) {
     if (!allowed.includes(n)) return null;
     powerups[key] = n;
   }
-  return { lang: c.lang, difficulty: c.difficulty, count: c.count, minutes, partial: c.partial === true, revealCost, powerups };
+  const out = { lang: c.lang, difficulty: c.difficulty, count: c.count, minutes, partial: c.partial === true, revealCost, powerups };
+  if (custom) out.levels = [...c.levels];
+  return out;
 }
 
 /** A pick: { mode, category }, each a real value or 'random'. */
@@ -272,9 +279,11 @@ function settlePick(config, pick) {
 /**
  * Questions for a round: the chosen difficulty and topic first, topped up from the
  * topic's other difficulties, then from the mode's other topics, so a round has
- * `count` questions whenever the bank allows.
+ * `count` questions whenever the bank allows. With a level per question (difficulty
+ * 'custom') each slot is filled in turn (pickSlots), in the host's order.
  */
 function roundQuestions(config, { mode, category }) {
+  if (config.difficulty === 'custom') return pickSlots({ lang: config.lang, mode, category, levels: config.levels });
   const picked = pickQuestions({ ...config, mode, category });
   const topUp = (more) => {
     for (const q of more) if (picked.length < config.count && !picked.includes(q)) picked.push(q);
@@ -1157,6 +1166,34 @@ export function attachDuel(httpServer, {
       if (error) return { error };
       if (type === 'keyboard') return mouseKeys(s.room, s.player, targets, targetId);
       return type === 'blackout' ? blackout(s.room, s.player, targets) : wipe(s.room, s.player, targets);
+    });
+
+    // After your round: the questions with every side's answer, to look back at.
+    handle('duel:review', () => {
+      const s = mine();
+      const side = s && sideOf(s.room, s.player);
+      if (!side || s.room.status === 'lobby') return { error: 'There is no round to review.' };
+      if (s.room.status !== 'finished' && side.state.status !== 'finished') return { error: 'Finish your round first.' };
+      const questions = side.state.questions.map(({ id }) => ({
+        id,
+        answers: s.room.sides.map((sd) => {
+          const q = sd.state.qs[questionIndex(sd.state, id)];
+          // A team's shared document, or the code of the (only) player on the side.
+          const writer = members(s.room, sd).find((p) => codeOf(sd, p, id)) ?? members(s.room, sd)[0];
+          return {
+            side: sd.key,
+            name: sideName(s.room, sd),
+            team: sd.team,
+            bot: !sd.team && !!writer?.bot,
+            you: sd === side,
+            status: q?.status ?? 'open',
+            points: q?.points ?? 0,
+            playing: sd.state.status === 'playing',
+            code: writer ? codeOf(sd, writer, id)?.text ?? null : null,
+          };
+        }),
+      }));
+      return { questions };
     });
 
     handle('duel:extend', ({ minutes }) => {

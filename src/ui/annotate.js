@@ -1,11 +1,12 @@
 // Scoresheet annotation: every finished question gets a chess-style mark,
 // worked out from its score breakdown, with a plain-words meaning.
 import { h } from './dom.js';
+import { SPEED_SHARE } from '../state/engine.js';
 
 export const MARKS = [
   { mark: '!!', kind: 'brilliant', label: 'Brilliant', text: 'solved with no penalties and at least half the speed bonus' },
   { mark: '!', kind: 'good', label: 'Clean', text: 'solved with no penalties' },
-  { mark: '!?', kind: 'dubious', label: 'Solved with penalties', text: 'extra test runs, wrong submits, reveals or lines over par cost points' },
+  { mark: '!?', kind: 'dubious', label: 'Solved with penalties', text: 'wrong submits, reveals or lines over par cost points' },
   { mark: '?', kind: 'miss', label: 'Not solved', text: 'time ran out, or it was skipped or left' },
 ];
 
@@ -14,9 +15,10 @@ export function annotation(result) {
   if (!result?.solved) return MARKS[3];
   const b = result.breakdown;
   if (!b) return MARKS[1];
-  const penalties = b.submitPenalty + b.testPenalty + b.editPenalty + (b.revealPenalty ?? 0);
+  // testPenalty: runs scored before "Run tests" became free (saved bests).
+  const penalties = b.submitPenalty + (b.testPenalty ?? 0) + b.editPenalty + (b.revealPenalty ?? 0);
   if (penalties > 0) return MARKS[2];
-  return b.timeBonus >= b.base / 4 ? MARKS[0] : MARKS[1];
+  return b.timeBonus >= (b.base * SPEED_SHARE) / 2 ? MARKS[0] : MARKS[1];
 }
 
 /** The mark as an element, with its meaning as a tooltip and for screen readers. */

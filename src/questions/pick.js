@@ -12,6 +12,29 @@ function shuffle(xs) {
   return a;
 }
 
+// A level per question slot in a duel room (difficulty 'custom'); 'mixed' = any level.
+export const SLOT_LEVELS = ['easy', 'medium', 'hard', 'mixed'];
+
+/**
+ * One question per slot, in slot order: { lang, mode, category, levels }. Each slot
+ * takes a question of its level from the topic, else from the mode's other topics,
+ * else of any level, never the same question twice.
+ */
+export function pickSlots({ lang, mode, category, levels }) {
+  const picked = [];
+  for (const level of levels) {
+    const tries = [{ category, difficulty: level }, { difficulty: level }, { category, difficulty: 'mixed' }, { difficulty: 'mixed' }];
+    for (const t of tries) {
+      const pool = shuffle(filterQuestions({ lang, mode, ...t }).filter((q) => !picked.includes(q)));
+      if (pool.length) {
+        picked.push(pool[0]);
+        break;
+      }
+    }
+  }
+  return picked;
+}
+
 /** config: { lang, mode, difficulty, count } -> questions in play order */
 export function pickQuestions(config) {
   const picked = shuffle(filterQuestions(config)).slice(0, config.count);

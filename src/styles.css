@@ -284,7 +284,19 @@ select { cursor: pointer; }
 .rules-live dd.rules-total { align-items: flex-end; }
 .rules-live dd.rules-total { font-family: var(--sans); font-stretch: 62%; font-size: 24px; line-height: 1; color: var(--buff); }
 
-.work { display: grid; grid-template-rows: minmax(0, 1fr) auto minmax(150px, 34%); grid-template-columns: minmax(0, 1fr); min-width: 0; }
+.work { --console-row: minmax(90px, var(--console-h, 34%)); display: grid; grid-template-rows: minmax(0, 1fr) auto var(--console-row); grid-template-columns: minmax(0, 1fr); min-width: 0; }
+/* The Output / Test results box: its height is dragged with the grip on top; hidden, only its tabs stay. */
+html[data-console-hidden='true'] .work:not(.console-forced) { --console-row: auto; }
+html[data-console-hidden='true'] .work:not(.console-forced) .console > :not(.tabs):not(.console-grip) { display: none; }
+.work.console-forced { --console-row: minmax(230px, max(40%, var(--console-h, 34%))); }
+.console { position: relative; }
+.console-grip { position: absolute; left: 0; right: 0; top: -4px; height: 8px; z-index: 5; cursor: row-resize; }
+.console-grip::after { content: ''; position: absolute; left: 50%; top: 2px; width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: var(--g5); opacity: 0; transition: opacity 0.15s; }
+.console-grip:hover::after, .console-grip:focus-visible::after, .resizing-console .console-grip::after { opacity: 1; background: var(--buff); }
+html[data-console-hidden='true'] .console-grip { display: none; }
+.resizing-console { cursor: row-resize; user-select: none; }
+.console-toggle .icon { transform: rotate(90deg); transition: transform 0.15s; }
+html[data-console-hidden='true'] .console-toggle .icon { transform: rotate(-90deg); }
 .editor-host { min-height: 0; overflow: hidden; background: var(--code-bg); }
 .editor-host .cm-editor { height: 100%; }
 .cm-scroller, .console-pane { font-variant-ligatures: none; }
@@ -726,7 +738,7 @@ body.chat-side-open .watch-toggle > span:not(.icon) { display: none; }
 .qtab-mates i { font-style: normal; font-size: 10px; font-weight: 800; width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center; background: var(--g5); color: var(--ink); }
 
 /* The team's shared editor: a line above it saying who else is in it, and their cursors. */
-.round-game .work:has(> .team-strip:not([hidden])) { grid-template-rows: auto minmax(0, 1fr) auto minmax(150px, 34%); }
+.round-game .work:has(> .team-strip:not([hidden])) { grid-template-rows: auto minmax(0, 1fr) auto var(--console-row); }
 .team-strip { display: flex; align-items: center; gap: 7px; padding: 5px 12px; font-size: 13px; color: var(--g8); background: var(--g2); border-bottom: 1px solid var(--g4); }
 .team-strip .icon { color: var(--brass); width: 14px; height: 14px; }
 .cm-mate { position: relative; display: inline-block; width: 0; height: 1.2em; vertical-align: text-bottom; border-left: 2px solid var(--g8); margin-left: -1px; }
@@ -947,3 +959,42 @@ body.chat-side-open .ext-toggle > span:not(.icon) { display: none; }
 .power-grant.on { color: var(--buff-ink); background: var(--buff); border-color: var(--buff); }
 .power-grant.static { cursor: default; }
 .team-help .icon { width: 12px; height: 12px; vertical-align: -1px; color: var(--buff); }
+
+/* ---------- duel results: review the questions and everyone's answers */
+.review { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--g4); display: flex; flex-direction: column; gap: 12px; }
+.review-top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.review-top .section-title { margin: 0; }
+.review-top p { margin: 0; }
+.review-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.review-tab { display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 13px; font-weight: 650; color: var(--g8); background: var(--g1); border: 1px solid var(--g4); border-radius: var(--r-sm); padding: 5px 10px; cursor: pointer; }
+.review-tab .n { color: var(--g7); font-weight: 800; }
+.review-tab .icon { width: 14px; height: 14px; color: var(--mint); }
+.review-tab:hover { border-color: var(--g6); color: var(--ink); }
+.review-tab.active { background: var(--g4); border-color: var(--buff); color: var(--ink); }
+.review-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 18px; align-items: start; }
+.review-problem { background: var(--g1); border: 1px solid var(--g4); border-radius: var(--r); padding: 14px 16px; }
+.review-problem h2 { font-size: 20px; margin: 0; }
+.review-answers { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.review-label { margin: 0; font-size: 13px; color: var(--g8); font-weight: 700; }
+.review-answer { border: 1px solid var(--g4); border-radius: var(--r); background: var(--g1); overflow: hidden; }
+.review-answer.you { border-color: var(--g6); }
+.review-head { display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-bottom: 1px solid var(--g4); font-size: 13px; background: var(--g2); }
+.review-head .icon { width: 14px; height: 14px; }
+.review-state { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 700; }
+.review-state.ok { color: var(--mint); }
+.review-state.bad { color: var(--flag-text); }
+.review-state.partial { color: var(--brass); }
+.review-state.live { color: var(--g7); }
+.review-reference .review-head .btn { margin-left: auto; }
+.review-reference .bug-explanation, .review-reference > p { margin: 8px 12px; }
+.review-code { max-height: 340px; overflow: auto; }
+.review-empty { margin: 10px 12px; }
+@media (max-width: 900px) { .review-body { grid-template-columns: 1fr; } }
+
+/* ---------- duel lobby: a difficulty per question */
+.slot-levels { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.slot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 6px; }
+.slot-level { display: flex; align-items: center; gap: 6px; }
+.slot-level select { flex: 1; min-width: 0; padding-top: 5px; padding-bottom: 5px; font-size: 13px; }
+.slot-n { font-weight: 800; font-size: 13px; color: var(--g8); width: 26px; flex: none; }
+.slot-help { margin: 0; }

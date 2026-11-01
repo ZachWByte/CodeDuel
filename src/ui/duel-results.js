@@ -2,7 +2,7 @@
 // result per question. Updates live while others are still playing, with their
 // code to watch.
 import { h, setChildren, formatTime } from './dom.js';
-import { getQuestion, LANG_LABELS, MODE_LABELS, DIFFICULTY_LABELS, CATEGORIES } from '../questions/index.js';
+import { getQuestion, LANG_LABELS, MODE_LABELS, CATEGORIES, difficultyText } from '../questions/index.js';
 import { playerList, matchScore } from './lobby.js';
 import { standings, mySide, sideLabel, ordinal } from './leaderboard.js';
 import { solvedCount } from '../state/round.js';
@@ -23,7 +23,7 @@ function cell(side, i) {
   const q = side.state.qs[i];
   if (q.status === 'solved') {
     const b = q.breakdown;
-    const lost = b.submitPenalty + b.testPenalty + b.editPenalty + b.revealPenalty;
+    const lost = b.submitPenalty + b.editPenalty + b.revealPenalty;
     const detail = [`solved at ${formatTime(Math.round((q.solvedAt - side.state.startedAt) / 1000))}`,
       `${q.attempts} submit${q.attempts === 1 ? '' : 's'}`, `${q.testRuns} test runs`, `= ${b.base} +${b.timeBonus} −${lost}`];
     return h('td.num.ok', { title: detail.join(' · ') }, markEl({ solved: true, breakdown: b }), ` ${q.points}`);
@@ -34,10 +34,11 @@ function cell(side, i) {
 }
 
 /**
- * renderDuelResults(root, { room, onNext(), onLeave(), chatToggle?, watch? }) -> { update(room), cleanup() }
+ * renderDuelResults(root, { room, onNext(), onLeave(), chatToggle?, watch?, review? }) -> { update(room), cleanup() }
  * watch: { el, update(room) }, the others' code to spectate while you wait
+ * review: { el, update(room) }, the questions and everyone's answers, to look back at
  */
-export function renderDuelResults(root, { room: initial, onNext, onLeave, chatToggle = null, watch = null }) {
+export function renderDuelResults(root, { room: initial, onNext, onLeave, chatToggle = null, watch = null, review = null }) {
   let room = initial;
   let error = '';
   let alive = true; // a reply can arrive after the next screen has replaced this one
@@ -56,6 +57,7 @@ export function renderDuelResults(root, { room: initial, onNext, onLeave, chatTo
     const done = room.status === 'finished';
     const score = matchScore(room);
     watch?.update(room);
+    review?.update(room);
     // While you wait, the others' code comes first; after the round, below the table.
     const watching = watch ? h('div.results-watch', {}, h('h3.section-title', {}, done ? 'Their code' : 'Watch them finish'), watch.el) : null;
 
@@ -63,7 +65,7 @@ export function renderDuelResults(root, { room: initial, onNext, onLeave, chatTo
       h('div.card.results-card', {},
         h('div.duel-head', {},
           headline(room, ranked),
-          h('p.muted', {}, `Round ${room.round} · ${info ? `${MODE_LABELS[info.mode]} · ${CATEGORIES[info.category]?.label}` : ''} · ${DIFFICULTY_LABELS[c.difficulty]} · ${LANG_LABELS[c.lang]} · ${c.minutes} min`),
+          h('p.muted', {}, `Round ${room.round} · ${info ? `${MODE_LABELS[info.mode]} · ${CATEGORIES[info.category]?.label}` : ''} · ${difficultyText(c)} · ${LANG_LABELS[c.lang]} · ${c.minutes} min`),
           score && done ? h('p.match-line', {}, 'Match: ', h('strong', {}, score)) : null),
         h('ol.final-standings', {}, ranked.map((s) =>
           h(`li.final-row${s.key === mySide(room) ? '.you' : ''}${done && s.key === room.lastWinnerSide ? '.winner' : ''}${s.team ? `.lb-${s.team}` : ''}`, {},
@@ -84,6 +86,7 @@ export function renderDuelResults(root, { room: initial, onNext, onLeave, chatTo
           h('tfoot', {}, h('tr', {}, h('td', { colspan: 2 }, 'Total'), ranked.map((s) => h('td.num', {}, s.state.total))))),
         h('p.muted.small', {}, 'Hover a score to see how it was worked out.'),
         markLegend(),
+        review?.el ?? null,
         done ? watching : null,
         done && room.lastWinnerSide && room.round ? h('p', {}, nextPicker(room, ranked)) : null,
         error ? h('p.duel-error', {}, error) : null,

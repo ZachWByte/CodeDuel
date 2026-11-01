@@ -118,7 +118,6 @@ export function breakdownRows(b) {
     row('Solve', b.base),
     b.partial ? row('Secret tests passed', `+${b.partial}`, '.gain') : row('Speed bonus', `+${b.timeBonus}`, '.gain'),
     b.submitPenalty ? row('Wrong submits', `−${b.submitPenalty}`, '.cost') : null,
-    b.testPenalty ? row('Extra test runs', `−${b.testPenalty}`, '.cost') : null,
     b.editPenalty ? row('Lines over par', `−${b.editPenalty}`, '.cost') : null,
     b.revealPenalty ? row('Tests revealed', `−${b.revealPenalty}`, '.cost') : null);
 }

@@ -94,6 +94,67 @@ export function installViewSettings() {
 }
 
 /**
+ * The Output / Test results box under the editor: a grip on its top edge to drag
+ * its height (a share of `work`, saved with the view settings) and a Hide / Show
+ * button. -> { grip, toggle, show(), destroy() }
+ */
+export function consoleControls(work) {
+  const grip = h('div.console-grip', {
+    role: 'separator',
+    'aria-orientation': 'horizontal',
+    'aria-label': 'Resize the output box',
+    tabindex: 0,
+    title: 'Drag to resize · double-click to reset',
+  });
+  const heightAt = (clientY) => {
+    const r = work.getBoundingClientRect();
+    return ((r.bottom - clientY) / r.height) * 100;
+  };
+  grip.addEventListener('mousedown', (e) => e.preventDefault());
+  grip.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    document.body.classList.add('resizing-console');
+    const move = (ev) => setPrefs({ consoleHeight: heightAt(ev.clientY) }, { save: false });
+    const up = () => {
+      document.body.classList.remove('resizing-console');
+      grip.removeEventListener('pointermove', move);
+      setPrefs({}); // save once at the end
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', up, { once: true });
+    grip.addEventListener('pointercancel', up, { once: true });
+  });
+  grip.addEventListener('dblclick', () => setPrefs({ consoleHeight: DEFAULT_PREFS.consoleHeight }));
+  grip.addEventListener('keydown', (e) => {
+    const dir = { ArrowUp: 1, ArrowDown: -1 }[e.key];
+    if (!dir) return;
+    e.preventDefault();
+    setPrefs({ consoleHeight: getPrefs().consoleHeight + dir * 3 });
+  });
+
+  const toggle = h('button.btn.btn-ghost.btn-small.console-toggle', {
+    type: 'button',
+    onclick: () => setPrefs({ consoleHidden: !getPrefs().consoleHidden }),
+  });
+  const drawToggle = () => {
+    const hidden = getPrefs().consoleHidden;
+    setChildren(toggle, icon('chevron'), hidden ? 'Show' : 'Hide');
+    toggle.title = hidden ? 'Show the output and test results' : 'Hide the output and test results (they come back when you run)';
+    toggle.setAttribute('aria-expanded', String(!hidden));
+  };
+  drawToggle();
+  const off = onPrefs(drawToggle);
+  return {
+    grip,
+    toggle,
+    /** Shows the box (a run or submit has results to show). */
+    show() { if (getPrefs().consoleHidden) setPrefs({ consoleHidden: false }); },
+    destroy: off,
+  };
+}
+
+/**
  * Draggable bar between the problem and work panels of `main`.
  * Width is the problem panel's share of `main`, whichever side it is on.
  */

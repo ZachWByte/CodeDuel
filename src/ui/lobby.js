@@ -9,6 +9,7 @@ import { viewButton } from './view-settings.js';
 import { icon, brandMark, clockCase } from './icons.js';
 import { filterQuestions, LANG_LABELS, MODE_LABELS, DIFFICULTY_LABELS, CATEGORIES } from '../questions/index.js';
 import { ROUND_MINUTES, REVEAL_COSTS, POWERUP_USES } from '../state/round.js';
+import { SLOT_LEVELS } from '../questions/pick.js';
 
 export const roomLink = (code) => `${location.origin}/?room=${code}`;
 const BOT_LEVELS = [['easy', 'Easy bot'], ['medium', 'Medium bot'], ['hard', 'Hard bot']];
@@ -143,7 +144,7 @@ export function renderLobby(root, { room: initial, chatEl = null, onConfig, onPi
     const modes = mode === 'random' ? Object.keys(MODE_LABELS) : [mode];
     const n = (difficulty) => modes.reduce((sum, m) => sum +
       filterQuestions({ lang: room.config.lang, mode: m, category: category === 'random' ? undefined : category, difficulty }).length, 0);
-    const exact = n(room.config.difficulty);
+    const exact = n(room.config.difficulty === 'custom' ? 'mixed' : room.config.difficulty);
     return exact > 0 ? `${exact}` : `${n('mixed')}, any level`;
   }
 
@@ -228,10 +229,27 @@ export function renderLobby(root, { room: initial, chatEl = null, onConfig, onPi
     const set = (patch) => run(onConfig({ ...c, ...patch }));
     const opts = { disabled: !isHost };
     const revealLabel = (cost) => (cost === 0 ? 'Not allowed' : `Allowed, −${Math.round(cost * 100)}% of the question`);
+    // Difficulty for the whole round, or one level per question (in that order).
+    const custom = c.difficulty === 'custom';
+    const sized = (levels, n) => Array.from({ length: n }, (_, i) => levels?.[i] ?? levels?.at(-1) ?? 'mixed');
+    const setDifficulty = (difficulty) => (difficulty === 'custom'
+      ? set({ difficulty, levels: sized([], c.count).map(() => c.difficulty) })
+      : set({ difficulty }));
+    const setCount = (count) => set(custom ? { count, levels: sized(c.levels, count) } : { count });
+    const slots = custom ? h('div.slot-levels', { role: 'group', 'aria-label': 'Difficulty of each question' },
+      h('span.field-name', {}, 'Each question', isHost ? null : h('span.muted', {}, ' · set by the host')),
+      h('div.slot-grid', {}, c.levels.map((level, i) => h('label.slot-level', {},
+        h('span.slot-n', {}, `Q${i + 1}`),
+        h('select', {
+          disabled: !isHost,
+          'aria-label': `Question ${i + 1} difficulty`,
+          onchange: (e) => set({ levels: c.levels.map((l, j) => (j === i ? e.target.value : l)) }),
+        }, SLOT_LEVELS.map((l) => h('option', { value: l, selected: l === level }, l === 'mixed' ? 'Any' : DIFFICULTY_LABELS[l])))))),
+      h('p.muted.small.slot-help', {}, 'The round’s mode and topic still pick which questions; each comes at its level, in this order.')) : null;
     const settings = h('div.settings-grid', {},
       selectField('Language', Object.entries(LANG_LABELS), c.lang, (lang) => set({ lang }), opts),
-      selectField('Difficulty', Object.entries(DIFFICULTY_LABELS), c.difficulty, (difficulty) => set({ difficulty }), opts),
-      selectField('Questions', COUNTS.map((n) => [n, String(n)]), c.count, (count) => set({ count: Number(count) }), opts),
+      selectField('Difficulty', [...Object.entries(DIFFICULTY_LABELS), ['custom', 'Set per question']], c.difficulty, setDifficulty, opts),
+      selectField('Questions', COUNTS.map((n) => [n, String(n)]), c.count, (count) => setCount(Number(count)), opts),
       selectField('Round time', ROUND_MINUTES.map((m) => [m, `${m} minutes`]), c.minutes, (minutes) => set({ minutes: Number(minutes) }),
         { ...opts, id: 'set-minutes', help: 'One clock for the whole round. Do the questions in any order.' }),
       selectField('Secret tests', [['false', 'Only a solve scores'], ['true', 'Each one passed scores']], String(c.partial),
@@ -275,7 +293,7 @@ export function renderLobby(root, { room: initial, chatEl = null, onConfig, onPi
               h('button.icon-btn#btn-copy', { type: 'button', onclick: copyLink, title: 'Copy the invite link', 'aria-label': 'Copy the invite link' }, icon('copy'))),
             score ? h('p.match-score', {}, h('span.label', {}, 'Match'), h('strong', {}, score)) : null),
           pickSection(),
-          h('div.lobby-block', {}, h('h3.block-title', {}, 'Settings', isHost ? null : h('span.muted.small', {}, ' · set by the host')), settings),
+          h('div.lobby-block', {}, h('h3.block-title', {}, 'Settings', isHost ? null : h('span.muted.small', {}, ' · set by the host')), settings, slots),
           h('div.lobby-block', {}, h('h3.block-title', {}, icon('bolt'), 'Power-ups', isHost ? null : h('span.muted.small', {}, ' · set by the host')), powers)),
 
         h('section.lobby-col', { 'aria-label': 'Players' },

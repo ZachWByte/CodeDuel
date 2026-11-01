@@ -59,17 +59,17 @@ trees/stacks/streams, backtracking & greedy.
 
 ## Scoring
 
-A solved question is worth its base (100 / 200 / 300 for easy / medium / hard) plus up to
-half of that again for speed, minus:
+A solved question is worth its base (100 / 200 / 300 for easy / medium / hard) plus a
+speed bonus of up to the base again (so up to double), falling as the clock runs, minus:
 
-- 10% of the base for each wrong **Submit**;
-- 5% for each **Run tests** after the first, which is free;
+- 10% of the base for each wrong **Submit** (failing the secret tests);
 - **Bug Hunt:** 10% for each changed line beyond *par*, the number of lines the reference
-  fix changes. The toolbar shows your test runs and `lines changed / par` as you type.
+  fix changes. The toolbar shows `lines changed / par` as you type.
 
-It never drops below 20% of the base. Unsolved questions score 0. The rules are the same in
-single player and duels (`scoreBreakdown` in `state/engine.js`), and the end of each question
-shows the breakdown.
+**Run tests** (the visible tests) is free: run them as often as you like. A solved question
+never drops below 20% of the base; unsolved questions score 0. The rules are the same in
+single player and duels (`scoreBreakdown` in `state/engine.js`, `questionBreakdown` in
+`state/round.js`), and the end of each question shows the breakdown.
 
 ## Layout
 
@@ -123,7 +123,8 @@ per round come from the settings above) and shows a 4-letter code and a link
 (`/?room=CODE`). **🤖 Play a bot** creates a room with a practice bot in it.
 
 - **Lobby:** up to 6 players, who is ready, the match score and a chat. The host sets
-  the language, difficulty, number of questions and three round options, and can add
+  the language, difficulty (one for the round, or **set per question**: e.g. easy, easy,
+  medium, hard, any), number of questions and three round options, and can add
   or remove bots (easy, medium or hard). Everyone sees the same settings; only the host
   can change them:
   - **Round time** (5–60 minutes): one clock for the whole round. Every question is
@@ -180,6 +181,9 @@ per round come from the settings above) and shows a 4-letter code and a link
   every character replaced); the server never sends the real code before you have
   solved that question or your round is over. On the results screen you can watch the
   others finish.
+- **Review:** once your round is over, the results screen has a tab per question with
+  its statement, every side's final code and result (it fills in as the others finish),
+  and the reference solution (hidden until you ask).
 - **Results:** final standings, and every side's score per question. The top side wins
   the round, and each of its players gets a point in the match.
 - **Chat:** open in the lobby and on the results screen. During a round it folds into a

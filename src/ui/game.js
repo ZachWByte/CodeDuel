@@ -1,13 +1,13 @@
 // Solo game screen: problem panel, editor, console and test results, one question
 // at a time with a clock per question. Duel rounds use round-game.js.
 import { h, setChildren, formatTime, confirmDialog } from './dom.js';
-import { viewButton, splitter, closePanel } from './view-settings.js';
+import { viewButton, splitter, closePanel, consoleControls } from './view-settings.js';
 import { createEditor, createViewer } from '../editor/editor.js';
 import { getQuestion, LANG_LABELS, MODE_LABELS, DIFFICULTY_LABELS } from '../questions/index.js';
 import { startingCode, linesChanged, LANG_FAMILY } from '../judge/resolve.js';
 import { runVisibleTests, submitSolution } from '../judge/judge.js';
 import { run } from '../runners/runner.js';
-import { timeLeftSec, scoreBreakdown, BASE_POINTS, PENALTIES, FREE_TEST_RUNS } from '../state/engine.js';
+import { timeLeftSec, scoreBreakdown, BASE_POINTS, PENALTIES, SPEED_SHARE } from '../state/engine.js';
 import { loadDraft, saveDraft, clearDraft, loadBest, saveBestIfBetter } from '../state/storage.js';
 import { icon, brandMark, clockCase } from './icons.js';
 import { markEl } from './annotate.js';
@@ -70,6 +70,8 @@ export function renderGame(root, { store, resumed, onFinished, onQuit, onCode = 
     el.output.hidden = name !== 'output';
     el.results.hidden = name !== 'results';
   }
+  // Clicking a tab of the hidden output box shows it again.
+  for (const b of Object.values(tabs)) b.addEventListener('click', () => box?.show());
 
   el.clock = clockCase([
     ['question', el.qcount, { className: '.face-q' }],
@@ -87,18 +89,22 @@ export function renderGame(root, { store, resumed, onFinished, onQuit, onCode = 
     el.main,
     el.sheet));
   // The editor side and widths come from the view settings (CSS variables).
+  const work = h('section.panel.work', {});
+  const box = consoleControls(work);
+  work.append(
+    el.editorHost,
+    h('div.toolbar', {},
+      h('div.tool-group', {}, btn.run, btn.tests, btn.submit),
+      el.meter, h('span.spacer', {}), el.status,
+      h('div.tool-group.tool-end', {}, btn.reset, btn.skip)),
+    h('div.console', {},
+      box.grip,
+      h('div.tabs', {}, tabs.output, tabs.results, h('span.spacer', {}), el.engineNote, box.toggle),
+      el.output, el.results));
   el.main.append(
     h('section.panel.problem', {}, el.endCard, el.problem),
     splitter(el.main),
-    h('section.panel.work', {},
-      el.editorHost,
-      h('div.toolbar', {},
-        h('div.tool-group', {}, btn.run, btn.tests, btn.submit),
-        el.meter, h('span.spacer', {}), el.status,
-        h('div.tool-group.tool-end', {}, btn.reset, btn.skip)),
-      h('div.console', {},
-        h('div.tabs', {}, tabs.output, tabs.results, h('span.spacer', {}), el.engineNote),
-        el.output, el.results)));
+    work);
   showTab('output');
   el.output.append(h('p.muted', {}, 'Run your program to see its output here.'));
 
@@ -142,16 +148,14 @@ export function renderGame(root, { store, resumed, onFinished, onQuit, onCode = 
 
   const editedLines = () => linesChanged(startingCode(q, lang), editor.getCode());
 
-  /** Toolbar counters for the things that cost points: test runs and (Bug Hunt) edits. */
+  /** Toolbar counters: test runs (free) and (Bug Hunt) edits, which cost beyond par. */
   function updateMeter() {
     const c = store.getState().current;
     const base = BASE_POINTS[c.difficulty];
-    const runCost = Math.round(base * PENALTIES.testRun);
-    const freeLeft = Math.max(0, FREE_TEST_RUNS - c.testRuns);
-    const parts = [h(`span.meter-item${freeLeft ? '' : '.warn'}`, {
-      title: `Each "Run tests" after the first ${FREE_TEST_RUNS} costs ${runCost} points`,
+    const parts = [h('span.meter-item', {
+      title: 'Run tests as often as you like: only a wrong Submit (failing the secret tests) costs points',
     }, icon('tests'), h('span', {}, h('b', {}, c.testRuns), h('span.long', {}, ` test run${c.testRuns === 1 ? '' : 's'}`), h('span.short', {}, ` run${c.testRuns === 1 ? '' : 's'}`)),
-    freeLeft ? h('span.muted', {}, `· ${freeLeft} free`) : h('span.cost-each', {}, `· −${runCost} each`))];
+    h('span.muted', {}, '· free'))];
     if (c.par !== null) {
       const n = editedLines();
       const lineCost = Math.round(base * PENALTIES.extraLine);
@@ -183,11 +187,10 @@ export function renderGame(root, { store, resumed, onFinished, onQuit, onCode = 
       live[key] = h('dd', {});
       return [h('dt', {}, label, h('span.rule', {}, rule)), live[key]];
     };
-    const free = FREE_TEST_RUNS === 1 ? 'first free' : `first ${FREE_TEST_RUNS} free`;
     return h('dl.rules.rules-live', { 'aria-label': 'Scoring' },
       row('base', `Solve · ${DIFFICULTY_LABELS[c.difficulty]}`, ''),
-      row('speed', 'Speed bonus', `up to +${base / 2}, falls as the clock runs`),
-      row('runs', 'Run tests', `${free}, then −${cost(PENALTIES.testRun)} each`),
+      row('speed', 'Speed bonus', `up to +${base * SPEED_SHARE}, falls as the clock runs`),
+      row('runs', 'Run tests', 'free'),
       row('submits', 'Wrong submits', `−${cost(PENALTIES.failedSubmit)} each`),
       c.par !== null ? row('lines', 'Lines changed', `par ${c.par}, then −${cost(PENALTIES.extraLine)} each`) : null,
       h('dt.rules-total', {}, 'If you solve it now'), (live.total = h('dd.rules-total', {})));
@@ -201,7 +204,7 @@ export function renderGame(root, { store, resumed, onFinished, onQuit, onCode = 
     const edited = c.par !== null ? editedLines() : 0;
     const b = scoreBreakdown({
       difficulty: c.difficulty, solved: true, timeLeftSec: left, timeLimitSec: c.timeLimitSec,
-      failedSubmits: c.failedSubmits, testRuns: c.testRuns, extraLines: Math.max(0, edited - (c.par ?? 0)),
+      failedSubmits: c.failedSubmits, extraLines: Math.max(0, edited - (c.par ?? 0)),
     });
     const set = (key, text, kind = '') => {
       if (!live[key]) return;
@@ -210,11 +213,11 @@ export function renderGame(root, { store, resumed, onFinished, onQuit, onCode = 
     };
     set('base', String(b.base));
     set('speed', `now +${b.timeBonus}`, 'gain');
-    set('runs', `${c.testRuns} used${b.testPenalty ? ` · −${b.testPenalty}` : ''}`, b.testPenalty ? 'cost' : '');
+    set('runs', `${c.testRuns} used`);
     set('submits', c.failedSubmits ? `${c.failedSubmits} · −${b.submitPenalty}` : '0', b.submitPenalty ? 'cost' : '');
     set('lines', `${edited}/${c.par}${b.editPenalty ? ` · −${b.editPenalty}` : ''}`, b.editPenalty ? 'cost' : '');
     set('total', String(b.points), 'rules-total');
-    const lost = b.submitPenalty + b.testPenalty + b.editPenalty;
+    const lost = b.submitPenalty + b.editPenalty;
     if (live.worth) {
       setChildren(live.worth, 'Worth up to ', h('strong', {}, b.points), ' now',
         lost ? h('span.cost', {}, ` · −${lost} lost`) : null);
@@ -345,6 +348,7 @@ export function renderGame(root, { store, resumed, onFinished, onQuit, onCode = 
   }
 
   function doRun() {
+    box.show();
     saveDraftNow();
     return withBusy(async () => {
       const code = editor.getCode();
@@ -362,6 +366,7 @@ export function renderGame(root, { store, resumed, onFinished, onQuit, onCode = 
   }
 
   function doTests() {
+    box.show();
     saveDraftNow();
     return withBusy(async () => {
       const qid = q.id;
@@ -378,6 +383,7 @@ export function renderGame(root, { store, resumed, onFinished, onQuit, onCode = 
 
   function doSubmit() {
     if (store.getState().current.status !== 'playing') return undefined;
+    box.show();
     saveDraftNow();
     return withBusy(async () => {
       const qid = q.id;
@@ -485,6 +491,7 @@ export function renderGame(root, { store, resumed, onFinished, onQuit, onCode = 
     window.removeEventListener('beforeunload', onUnload);
     offStore();
     offEngine();
+    box.destroy();
     viewers.forEach((v) => v.destroy());
     editor.destroy();
   };

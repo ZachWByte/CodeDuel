@@ -6,8 +6,12 @@ export const LIMITS = {
   zoom: { min: 70, max: 160, step: 10 }, // % of normal size, whole app
   editorFont: { min: 11, max: 24, step: 1 }, // px
   problemWidth: { min: 24, max: 62 }, // % of the game area
+  consoleHeight: { min: 12, max: 70 }, // % of the editor column: the Output / Test results box
 };
-export const DEFAULT_PREFS = { editorSide: 'right', zoom: 100, editorFont: 14, wrap: false, autocomplete: true, problemWidth: 38 };
+export const DEFAULT_PREFS = {
+  editorSide: 'right', zoom: 100, editorFont: 14, wrap: false, autocomplete: true, problemWidth: 38,
+  consoleHeight: 34, consoleHidden: false,
+};
 
 const clamp = (v, { min, max }, fallback) => (Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback);
 
@@ -19,6 +23,8 @@ function clean(p) {
     wrap: p.wrap === true,
     autocomplete: p.autocomplete !== false,
     problemWidth: Math.round(clamp(p.problemWidth, LIMITS.problemWidth, DEFAULT_PREFS.problemWidth) * 10) / 10,
+    consoleHeight: Math.round(clamp(p.consoleHeight, LIMITS.consoleHeight, DEFAULT_PREFS.consoleHeight) * 10) / 10,
+    consoleHidden: p.consoleHidden === true,
   };
 }
 
@@ -32,7 +38,9 @@ export function applyPrefs() {
   root.style.setProperty('--ui-zoom', String(prefs.zoom / 100));
   root.style.setProperty('--editor-font', `${prefs.editorFont}px`);
   root.style.setProperty('--problem-width', `${prefs.problemWidth}%`);
+  root.style.setProperty('--console-h', `${prefs.consoleHeight}%`);
   root.dataset.editorSide = prefs.editorSide;
+  root.dataset.consoleHidden = String(prefs.consoleHidden);
 }
 
 /** setPrefs(patch, { save = true }) — save: false while dragging the divider. */

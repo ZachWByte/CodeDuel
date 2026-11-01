@@ -8,6 +8,7 @@ import { createChatDock } from './ui/chat.js';
 import { createSpectator } from './ui/spectate.js';
 import { createPowerups } from './ui/powerups.js';
 import { createExtension } from './ui/extension.js';
+import { createReview } from './ui/review.js';
 import { createLeaderboard, standingText, standings, mySide, titleOf } from './ui/leaderboard.js';
 import { icon } from './ui/icons.js';
 import { displayName } from './ui/lobby.js';
@@ -236,12 +237,14 @@ export function createDuel({ root, mount, showHome }) {
 
   function resultsScreen() {
     const spectator = createSpectator();
+    const review = createReview({ load: () => request('duel:review') });
     const view = renderDuelResults(root, {
       room,
       onNext: () => request('duel:next'),
       onLeave: leave,
       chatToggle: chat.toggle,
       watch: { el: spectator.el, update: (r) => spectator.update(r, watches) },
+      review,
     });
     return {
       update: view.update,
@@ -249,6 +252,7 @@ export function createDuel({ root, mount, showHome }) {
       cleanup() {
         view.cleanup();
         spectator.destroy();
+        review.destroy();
       },
     };
   }

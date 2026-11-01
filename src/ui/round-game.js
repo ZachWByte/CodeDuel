@@ -3,15 +3,15 @@
 // team shares one live document per question, with teammates' cursors). Solving a
 // question offers the next one, or watching an opponent instead.
 import { h, setChildren, formatTime, confirmDialog } from './dom.js';
-import { viewButton, splitter, closePanel } from './view-settings.js';
+import { viewButton, splitter, closePanel, consoleControls } from './view-settings.js';
 import { createEditor, createViewer } from '../editor/editor.js';
 import { createCollabSession, remoteChange, setCursors } from '../editor/collab.js';
-import { getQuestion, LANG_LABELS, MODE_LABELS, DIFFICULTY_LABELS } from '../questions/index.js';
+import { getQuestion, LANG_LABELS, MODE_LABELS, difficultyText } from '../questions/index.js';
 import { startingCode, linesChanged, resolveTests, LANG_FAMILY } from '../judge/resolve.js';
 import { runVisibleTests, submitSolution } from '../judge/judge.js';
 import { run } from '../runners/runner.js';
 import { roundTimeLeftSec, worthNow, solvedCount } from '../state/round.js';
-import { BASE_POINTS, PENALTIES, FREE_TEST_RUNS } from '../state/engine.js';
+import { BASE_POINTS, PENALTIES, SPEED_SHARE } from '../state/engine.js';
 import { loadDraft, saveDraft, clearDraft } from '../state/storage.js';
 import { icon, brandMark, clockCase } from './icons.js';
 import { markEl } from './annotate.js';
@@ -38,7 +38,7 @@ const CURSOR_EVERY_MS = 250; // your cursor, for teammates
  */
 export function renderRound(root, { store, resumed, headerExtra = null, watch = null, team = null, hintsFor = null,
   onView, onCode, onProgress, onFinished, onQuit }) {
-  const { lang, mode, difficulty } = store.getState().config;
+  const { lang, mode } = store.getState().config;
   const fam = LANG_FAMILY[lang];
   let viewIndex = -1;
   let q = null; // the question on screen
@@ -102,8 +102,13 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
     h('div.tool-group', {}, btn.run, btn.tests, btn.submit),
     el.meter, h('span.spacer', {}), el.status,
     h('div.tool-group.tool-end', {}, btn.reset, btn.finish));
+  const work = h('section.panel.work', {});
+  const box = consoleControls(work);
+  // Clicking a tab of the hidden output box shows it again.
+  for (const b of Object.values(tabs)) b.addEventListener('click', () => box.show());
   el.console = h('div.console', {},
-    h('div.tabs', {}, tabs.output, tabs.results, h('span.spacer', {}), el.engineNote),
+    box.grip,
+    h('div.tabs', {}, tabs.output, tabs.results, h('span.spacer', {}), el.engineNote, box.toggle),
     el.serverNote, el.output, el.results);
   if (watch) {
     setChildren(el.watchPane,
@@ -118,7 +123,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
       h('div.hdr-left', {},
         h('button.btn.btn-ghost.btn-small#btn-quit', { onclick: () => doQuit() }, icon('back'), 'Leave'),
         h('span.brand', {}, brandMark()),
-        h('span.hdr-title', {}, `${MODE_LABELS[mode]} · ${DIFFICULTY_LABELS[difficulty]} · ${LANG_LABELS[lang]}`)),
+        h('span.hdr-title', {}, `${MODE_LABELS[mode]} · ${difficultyText(store.getState().config, { short: true })} · ${LANG_LABELS[lang]}`)),
       el.clock,
       h('div.hdr-right', {}, headerExtra, viewButton({ compact: !!headerExtra }))),
     el.main,
@@ -126,7 +131,8 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
   el.main.append(
     h('section.panel.problem', {}, el.endCard, el.problem),
     splitter(el.main),
-    h('section.panel.work', {}, el.teamStrip, el.editorHost, el.toolbar, el.console, el.watchPane, el.blackout));
+    work);
+  work.append(el.teamStrip, el.editorHost, el.toolbar, el.console, el.watchPane, el.blackout);
   showTab('output');
 
   // ---------------------------------------------------------------- the editor (and the team's shared one)
@@ -253,12 +259,10 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
     const c = stateQ();
     if (!c) return;
     const base = BASE_POINTS[c.difficulty];
-    const runCost = Math.round(base * PENALTIES.testRun);
-    const freeLeft = Math.max(0, FREE_TEST_RUNS - c.testRuns);
-    const parts = [h(`span.meter-item${freeLeft ? '' : '.warn'}`, {
-      title: `Each "Run tests" after the first ${FREE_TEST_RUNS} costs ${runCost} points`,
+    const parts = [h('span.meter-item', {
+      title: 'Run tests as often as you like: only a wrong Submit (failing the secret tests) costs points',
     }, icon('tests'), h('span', {}, h('b', {}, c.testRuns), h('span.long', {}, ` test run${c.testRuns === 1 ? '' : 's'}`), h('span.short', {}, ` run${c.testRuns === 1 ? '' : 's'}`)),
-    freeLeft ? h('span.muted', {}, `· ${freeLeft} free`) : h('span.cost-each', {}, `· −${runCost} each`))];
+    h('span.muted', {}, '· free'))];
     if (c.par !== null) {
       const n = editedLines();
       const lineCost = Math.round(base * PENALTIES.extraLine);
@@ -291,7 +295,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
       live[key].className = kind;
     };
     set('speed', `now +${w.timeBonus}`, 'gain');
-    set('runs', `${c.testRuns} used${w.testPenalty ? ` · −${w.testPenalty}` : ''}`, w.testPenalty ? 'cost' : '');
+    set('runs', `${c.testRuns} used`);
     set('submits', c.failedSubmits ? `${c.failedSubmits} · −${w.submitPenalty}` : '0', w.submitPenalty ? 'cost' : '');
     set('lines', `${editedLines()}/${c.par}${w.editPenalty ? ` · −${w.editPenalty}` : ''}`, w.editPenalty ? 'cost' : '');
     set('reveals', c.reveals.length ? `${c.reveals.length} · −${w.revealPenalty}` : '0', w.revealPenalty ? 'cost' : '');
@@ -299,7 +303,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
     set('total', String(w.points), 'rules-total');
   }
   const lostTitle = (w) => [
-    w.submitPenalty && `wrong submits −${w.submitPenalty}`, w.testPenalty && `extra test runs −${w.testPenalty}`,
+    w.submitPenalty && `wrong submits −${w.submitPenalty}`,
     w.editPenalty && `lines over par −${w.editPenalty}`, w.revealPenalty && `tests revealed −${w.revealPenalty}`,
   ].filter(Boolean).join(', ');
 
@@ -314,8 +318,8 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
     };
     return h('dl.rules.rules-live', { 'aria-label': 'Scoring' },
       [h('dt', {}, 'Solve'), h('dd', {}, String(base))],
-      row('speed', 'Speed bonus', `up to +${base / 2}, falls with the round clock`),
-      row('runs', 'Run tests', `first ${FREE_TEST_RUNS === 1 ? 'one' : FREE_TEST_RUNS} free, then −${cost(PENALTIES.testRun)}`),
+      row('speed', 'Speed bonus', `up to +${base * SPEED_SHARE}, falls with the round clock`),
+      row('runs', 'Run tests', 'free'),
       row('submits', 'Wrong submits', `−${cost(PENALTIES.failedSubmit)} each`),
       c.par !== null ? row('lines', 'Lines changed', `par ${c.par}, then −${cost(PENALTIES.extraLine)} each`) : null,
       cfg.revealCost > 0 ? row('reveals', 'Tests revealed', `−${cost(cfg.revealCost)} each`) : null,
@@ -399,6 +403,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
     keysUntil = until;
     screenKeys.setTitle(by ? `${by} took your keyboard` : 'An opponent took your keyboard');
     screenKeys.el.hidden = false;
+    work.classList.add('console-forced'); // the on-screen keyboard needs room
     editor.setKeyboardLock(true, () => screenKeys.nudge());
     const tick = () => {
       const left = Math.ceil((keysUntil - Date.now()) / 1000);
@@ -413,6 +418,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
     clearInterval(keysTimer);
     keysUntil = 0;
     screenKeys.el.hidden = true;
+    work.classList.remove('console-forced');
     editor.setKeyboardLock(false);
   }
 
@@ -557,6 +563,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
   }
 
   function doRun() {
+    box.show();
     saveDraftNow();
     return withBusy(async () => {
       const qid = q.id;
@@ -607,6 +614,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
   }
 
   function doTests() {
+    box.show();
     saveDraftNow();
     return withBusy(async () => {
       const qid = q.id;
@@ -620,6 +628,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
 
   function doSubmit() {
     if (!isOpen()) return undefined;
+    box.show();
     saveDraftNow();
     return withBusy(async () => {
       const qid = q.id;
@@ -762,6 +771,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
       if (!alive) return;
       serverNotes.set(questionId, message);
       drawServerNote();
+      if (q?.id === questionId) box.show();
       if (q?.id === questionId) showTab('results');
     },
     cleanup() {
@@ -779,6 +789,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
       window.removeEventListener('beforeunload', onUnload);
       offStore();
       offEngine();
+      box.destroy();
       offUpdates?.();
       offCursor?.();
       session?.close();

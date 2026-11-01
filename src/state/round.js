@@ -9,7 +9,7 @@
 //
 // Actions: tick, testRun, submitResult, reveal, finish.
 import { parLines } from '../judge/resolve.js';
-import { BASE_POINTS, PENALTIES, FREE_TEST_RUNS } from './engine.js';
+import { BASE_POINTS, PENALTIES, SPEED_SHARE } from './engine.js';
 
 export const ROUND_MINUTES = [5, 10, 15, 20, 30, 45, 60];
 export const REVEAL_COSTS = [0, 0.1, 0.25, 0.5];
@@ -20,7 +20,6 @@ export const DEFAULT_ROUND = { minutes: 15, partial: false, revealCost: 0 };
 export const EXTEND_MINUTES = [2, 5, 10];
 export const MAX_EXTENSIONS = 3;
 export const POWERUP_USES = { blackout: [0, 1, 2, 3], wipe: [0, 1, 2], keyboard: [0, 1, 2, 3], hints: [0, 1, 2, 3, 5] };
-const SPEED_SHARE = 0.5; // the speed bonus at the start of the round
 const PARTIAL_SHARE = 0.5; // every secret test passing, not solved
 const MIN_SHARE = 0.2; // a solve is always worth at least this
 const MAX_REVEALS = 20;
@@ -91,19 +90,18 @@ export function questionBreakdown(q, config, { solved, timeLeftSec = 0, duration
   const base = BASE_POINTS[q.difficulty];
   const extraLines = q.par !== null && q.linesChanged !== null ? Math.max(0, q.linesChanged - q.par) : 0;
   const submitPenalty = share(base, PENALTIES.failedSubmit) * q.failedSubmits;
-  const testPenalty = share(base, PENALTIES.testRun) * Math.max(0, q.testRuns - FREE_TEST_RUNS);
   const editPenalty = share(base, PENALTIES.extraLine) * extraLines;
   const revealPenalty = share(base, config.revealCost ?? 0) * q.reveals.length;
-  const lost = submitPenalty + testPenalty + editPenalty + revealPenalty;
+  const lost = submitPenalty + editPenalty + revealPenalty;
   if (solved) {
     const timeBonus = Math.round(base * SPEED_SHARE * Math.min(1, Math.max(0, timeLeftSec) / durationSec));
     // Solving is never worth less than passing every secret test without solving.
     const floor = Math.max(share(base, MIN_SHARE), config.partial ? share(base, PARTIAL_SHARE) - revealPenalty : 0);
     const points = Math.max(floor, base + timeBonus - lost);
-    return { base, timeBonus, partial: 0, submitPenalty, testPenalty, editPenalty, revealPenalty, lost, extraLines, points };
+    return { base, timeBonus, partial: 0, submitPenalty, editPenalty, revealPenalty, lost, extraLines, points };
   }
   const partial = config.partial && q.hiddenTotal ? Math.round(base * PARTIAL_SHARE * q.bestHidden / q.hiddenTotal) : 0;
-  return { base, timeBonus: 0, partial, submitPenalty, testPenalty, editPenalty, revealPenalty, lost, extraLines, points: Math.max(0, partial - revealPenalty) };
+  return { base, timeBonus: 0, partial, submitPenalty, editPenalty, revealPenalty, lost, extraLines, points: Math.max(0, partial - revealPenalty) };
 }
 
 /** The most a question can still score: solved right now. */

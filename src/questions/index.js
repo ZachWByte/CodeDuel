@@ -91,3 +91,16 @@ export const LANG_DOCS = {
 };
 export const MODE_LABELS = { 'code-race': 'Code Race', 'bug-hunt': 'Bug Hunt' };
 export const DIFFICULTY_LABELS = { easy: 'Easy', medium: 'Medium', hard: 'Hard', mixed: 'Mixed' };
+
+/**
+ * A duel room's difficulty in words. difficulty 'custom' means one level per
+ * question (config.levels, 'mixed' = any): "Per question: 2 easy, 1 hard, 1 any".
+ */
+export function difficultyText(config, { short = false } = {}) {
+  if (config.difficulty !== 'custom') return DIFFICULTY_LABELS[config.difficulty] ?? config.difficulty;
+  if (short) return 'Custom levels';
+  const counts = new Map();
+  for (const l of config.levels ?? []) counts.set(l, (counts.get(l) ?? 0) + 1);
+  const name = (l) => (l === 'mixed' ? 'any' : l);
+  return `Per question: ${['easy', 'medium', 'hard', 'mixed'].filter((l) => counts.has(l)).map((l) => `${counts.get(l)} ${name(l)}`).join(', ')}`;
+}

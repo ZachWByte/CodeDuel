@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { io as connect } from 'socket.io-client';
 import { attachDuel, validConfig, validPick, audioType } from '../server/duel.js';
 import { createSolutionStore } from '../server/solutions.js';
+import { createVerifier } from '../server/verify.js';
 import { getQuestion, BANK_VERSION } from '../src/questions/index.js';
 import { resolveTests, startingCode } from '../src/judge/resolve.js';
 
@@ -14,7 +15,9 @@ const raceLists = { mode: 'code-race', category: 'lists' };
 async function setup(options = {}) {
   const http = createServer();
   const solutions = createSolutionStore({ file: ':memory:' });
-  const duel = attachDuel(http, { log: process.env.DUEL_LOG ? console.log : () => {}, countdownMs: 0, solutions, ...options });
+  // No start-up preload of py-slang in tests: dozens of servers come and go.
+  const verifier = createVerifier({ prewarm: false });
+  const duel = attachDuel(http, { log: process.env.DUEL_LOG ? console.log : () => {}, countdownMs: 0, solutions, verifier, ...options });
   await new Promise((r) => http.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${http.address().port}`;
   const clients = [];
@@ -102,6 +105,12 @@ test('settings and picks are validated', () => {
   assert.equal(validConfig(null), null);
   assert.deepEqual(validPick({ mode: 'random', category: 'dp' }), { mode: 'random', category: 'dp' });
   assert.equal(validPick({ mode: 'bug-hunt', category: 'constructor' }), null);
+  // A level per question.
+  assert.deepEqual(validConfig({ ...config, count: 3, difficulty: 'custom', levels: ['easy', 'hard', 'mixed'] }).levels, ['easy', 'hard', 'mixed']);
+  assert.equal(validConfig({ ...config, count: 3, difficulty: 'custom', levels: ['easy', 'hard'] }), null, 'one level per question');
+  assert.equal(validConfig({ ...config, count: 1, difficulty: 'custom', levels: ['impossible'] }), null);
+  assert.equal(validConfig({ ...config, count: 1, difficulty: 'custom' }), null);
+  assert.equal(validConfig(config).levels, undefined);
   assert.deepEqual(validConfig({ ...config, powerups: { blackout: 2, wipe: 2 } }).powerups, { blackout: 2, wipe: 2, keyboard: 0, hints: 0 });
   assert.equal(validConfig({ ...config, powerups: { blackout: 5 } }), null);
   assert.equal(validConfig({ ...config, powerups: { wipe: 3 } }), null);
@@ -507,6 +516,52 @@ test('the host chooses who gets power-ups', async () => {
     assert.deepEqual((await b.until((r) => r.powers)).powers, { blackout: 0, wipe: 0, keyboard: 0, hints: 0, blackoutReadyAt: 0 });
     assert.equal((await a.until((r) => r.powers)).powers.hints, 2);
     assert.ok(rb);
+  } finally {
+    await close();
+  }
+});
+
+test('after your round you can review every question and everyone’s answers', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b } = await pair(client);
+    const ra = await startRound(a, b);
+    const qid = firstQ(ra);
+    assert.match((await a.request('duel:review')).error, /Finish your round/);
+    b.socket.emit('duel:code', { questionId: qid, code: '# bob was here' });
+    await new Promise((r) => setTimeout(r, 100));
+    a.socket.emit('duel:action', { type: 'submitResult', result: solve(qid), seq: 1 });
+    await a.until((r) => me(r).state.status === 'finished');
+    const res = await a.request('duel:review');
+    assert.equal(res.questions.length, 1);
+    const [q] = res.questions;
+    assert.equal(q.id, qid);
+    const ada = q.answers.find((x) => x.you);
+    const bob = q.answers.find((x) => !x.you);
+    assert.equal(ada.status, 'solved');
+    assert.equal(ada.code, getQuestion(qid).solution.sicpy);
+    assert.equal(bob.name, 'Bob');
+    assert.equal(bob.code, '# bob was here');
+    assert.equal(bob.playing, true, 'Bob is still at it');
+    assert.match((await b.request('duel:review')).error, /Finish your round/, 'Bob has not finished');
+  } finally {
+    await close();
+  }
+});
+
+test('a level per question: the round has those levels, in that order', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b } = await pair(client);
+    const levels = ['hard', 'easy', 'medium', 'easy', 'mixed'];
+    assert.ok((await a.request('duel:config', { config: { ...config, count: 5, difficulty: 'custom', levels } })).ok);
+    const lobby = await b.until((r) => r.config.difficulty === 'custom');
+    assert.deepEqual(lobby.config.levels, levels);
+    const ra = await startRound(a, b, { mode: 'code-race', category: 'random' });
+    const got = me(ra).state.questions.map((q) => q.difficulty);
+    assert.equal(got.length, 5);
+    assert.deepEqual(got.slice(0, 4), ['hard', 'easy', 'medium', 'easy']);
+    assert.equal(new Set(me(ra).state.questions.map((q) => q.id)).size, 5, 'no question twice');
   } finally {
     await close();
   }

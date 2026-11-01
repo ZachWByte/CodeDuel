@@ -10,27 +10,27 @@ export const TIME_LIMITS = {
   'bug-hunt': { easy: 180, medium: 360, hard: 600 },
 };
 export const BASE_POINTS = { easy: 100, medium: 200, hard: 300 };
-// Penalties, as shares of the question's base points.
+// Penalties, as shares of the question's base points. "Run tests" (the visible
+// tests) is free: only failing the secret tests, a wrong Submit, costs.
 export const PENALTIES = {
   failedSubmit: 0.1, // each wrong Submit
-  testRun: 0.05, // each "Run tests" after the free ones
   extraLine: 0.1, // Bug Hunt: each changed line beyond par
 };
-export const FREE_TEST_RUNS = 1;
+// The speed bonus at the very start, as a share of the base: solving fast pays.
+export const SPEED_SHARE = 1;
 const MIN_SHARE = 0.2; // a solved question is always worth at least this
 
 export const timeLimitFor = (q) => q.timeLimitSec ?? TIME_LIMITS[q.mode][q.difficulty];
 
 /** Points for a question and where they came from. */
-export function scoreBreakdown({ difficulty, solved, timeLeftSec, timeLimitSec, failedSubmits = 0, testRuns = 0, extraLines = 0 }) {
+export function scoreBreakdown({ difficulty, solved, timeLeftSec, timeLimitSec, failedSubmits = 0, extraLines = 0 }) {
   const base = BASE_POINTS[difficulty];
-  if (!solved) return { base, timeBonus: 0, submitPenalty: 0, testPenalty: 0, editPenalty: 0, points: 0 };
-  const timeBonus = Math.round(base * 0.5 * Math.min(1, Math.max(0, timeLeftSec) / timeLimitSec));
+  if (!solved) return { base, timeBonus: 0, submitPenalty: 0, editPenalty: 0, points: 0 };
+  const timeBonus = Math.round(base * SPEED_SHARE * Math.min(1, Math.max(0, timeLeftSec) / timeLimitSec));
   const submitPenalty = Math.round(base * PENALTIES.failedSubmit) * failedSubmits;
-  const testPenalty = Math.round(base * PENALTIES.testRun) * Math.max(0, testRuns - FREE_TEST_RUNS);
   const editPenalty = Math.round(base * PENALTIES.extraLine) * extraLines;
-  const points = Math.max(Math.round(base * MIN_SHARE), base + timeBonus - submitPenalty - testPenalty - editPenalty);
-  return { base, timeBonus, submitPenalty, testPenalty, editPenalty, points };
+  const points = Math.max(Math.round(base * MIN_SHARE), base + timeBonus - submitPenalty - editPenalty);
+  return { base, timeBonus, submitPenalty, editPenalty, points };
 }
 
 export const scoreQuestion = (args) => scoreBreakdown(args).points;
@@ -100,7 +100,6 @@ function endQuestion(state, status, now) {
     timeLeftSec: timeLeft,
     timeLimitSec: c.timeLimitSec,
     failedSubmits: c.failedSubmits,
-    testRuns: c.testRuns,
     extraLines,
   });
   const { points } = breakdown;
