@@ -1,25 +1,26 @@
-// A duel round: one clock for the whole round and every question open at once, so
-// a player (or a team, sharing one state) works on them in any order until the
-// time runs out. Pure like engine.js: the server runs it as the referee and each
-// browser runs it to show its own moves straight away.
+// A duel round: every question open at once, so a player (or a team, sharing one
+// state) works on them in any order until they have solved them all or finish. There
+// is no round clock: each question has its own, which only runs while someone on the
+// side has that question open, and what a question can score falls with it. Pure like
+// engine.js: the server runs it as the referee and each browser runs it to show its
+// own moves straight away.
 //
-// Room options (config): minutes (the round clock), partial (secret tests passed
-// earn points even when the question is not solved) and revealCost (the share of a
-// question's base points that revealing one failed secret test costs; 0 = off).
+// Room options (config): partial (secret tests passed earn points even when the
+// question is not solved) and revealCost (the share of a question's base points that
+// revealing one failed secret test costs; 0 = off).
 //
-// Actions: tick, testRun, submitResult, reveal, finish.
+// Actions: view, testRun, submitResult, reveal, finish.
 import { parLines } from '../judge/resolve.js';
-import { BASE_POINTS, PENALTIES, SPEED_SHARE } from './engine.js';
+import { BASE_POINTS, PENALTIES, timeLimitFor } from './engine.js';
 
-export const ROUND_MINUTES = [5, 10, 15, 20, 30, 45, 60];
 export const REVEAL_COSTS = [0, 0.1, 0.25, 0.5];
-export const DEFAULT_ROUND = { minutes: 15, partial: false, revealCost: 0 };
+export const DEFAULT_ROUND = { partial: false, revealCost: 0 };
 // Duel power-ups: uses per player per round the host may give (0 = off). See server/duel.js.
 // Blackout and wipe hit every opponent at once, so they come in small numbers.
-// Time extensions: what a player may ask for, and how many a round can have.
-export const EXTEND_MINUTES = [2, 5, 10];
-export const MAX_EXTENSIONS = 3;
 export const POWERUP_USES = { blackout: [0, 1, 2, 3], wipe: [0, 1, 2], keyboard: [0, 1, 2, 3], hints: [0, 1, 2, 3, 5] };
+// The most time on a question can cost, as a share of its base points, reached after
+// the question's usual time limit (engine.js). It costs nothing more after that.
+export const TIME_PENALTY_SHARE = 0.5;
 const PARTIAL_SHARE = 0.5; // every secret test passing, not solved
 const MIN_SHARE = 0.2; // a solve is always worth at least this
 const MAX_REVEALS = 20;
@@ -29,6 +30,9 @@ function questionState(meta) {
     questionId: meta.id,
     difficulty: meta.difficulty,
     par: meta.par ?? null, // Bug Hunt: lines the reference fix changes
+    limitSec: meta.limitSec,
+    spentMs: 0, // time on this question so far, not counting openSince
+    openSince: null, // when someone on the side opened it, while it is open
     attempts: 0,
     failedSubmits: 0,
     testRuns: 0,
@@ -46,7 +50,7 @@ function questionState(meta) {
 }
 
 /**
- * Start a round. config: { lang, mode, difficulty, count, minutes, partial, revealCost }
+ * Start a round. config: { lang, mode, difficulty, count, partial, revealCost }
  * questions: [{ id, mode, difficulty }] (full questions also get a Bug Hunt par).
  */
 export function createRound({ config, questions, now }) {
@@ -57,57 +61,56 @@ export function createRound({ config, questions, now }) {
     mode: q.mode,
     difficulty: q.difficulty,
     par: q.par ?? (q.buggy ? parLines(q, cfg.lang) : null),
+    limitSec: timeLimitFor(q),
   }));
-  const durationSec = cfg.minutes * 60;
   return {
     kind: 'round',
     config: cfg,
     questions: metas,
     qs: metas.map(questionState),
     startedAt: now,
-    endsAt: now + durationSec * 1000,
-    durationSec,
+    viewers: {}, // player id -> the question they have open
     total: 0,
     status: 'playing', // 'playing' | 'finished'
     endedAt: null,
-    endReason: null, // 'time' | 'solved' | 'finished'
+    endReason: null, // 'solved' | 'finished'
   };
 }
 
-/** Seconds left on the round clock (never more than the round, even during the countdown). */
-export function roundTimeLeftSec(state, now) {
-  const at = state.endedAt ?? now;
-  return Math.max(0, Math.min(state.durationSec, (state.endsAt - at) / 1000));
+/** Seconds spent on a question so far. */
+export function spentSec(q, now) {
+  return (q.spentMs + (q.openSince === null ? 0 : Math.max(0, now - q.openSince))) / 1000;
 }
 
 const share = (base, s) => Math.round(base * s);
 
 /**
  * Points for a question and where they came from. solved: score it as solved now,
- * with timeLeftSec on the round clock (the "worth up to" figure when it is not).
+ * after timeSec on it (the "worth up to" figure when it is not).
  */
-export function questionBreakdown(q, config, { solved, timeLeftSec = 0, durationSec = 1 }) {
+export function questionBreakdown(q, config, { solved, timeSec = 0 }) {
   const base = BASE_POINTS[q.difficulty];
   const extraLines = q.par !== null && q.linesChanged !== null ? Math.max(0, q.linesChanged - q.par) : 0;
   const submitPenalty = share(base, PENALTIES.failedSubmit) * q.failedSubmits;
   const editPenalty = share(base, PENALTIES.extraLine) * extraLines;
   const revealPenalty = share(base, config.revealCost ?? 0) * q.reveals.length;
-  const lost = submitPenalty + editPenalty + revealPenalty;
   if (solved) {
-    const timeBonus = Math.round(base * SPEED_SHARE * Math.min(1, Math.max(0, timeLeftSec) / durationSec));
+    const timePenalty = Math.round(base * TIME_PENALTY_SHARE * Math.min(1, Math.max(0, timeSec) / q.limitSec));
+    const lost = timePenalty + submitPenalty + editPenalty + revealPenalty;
     // Solving is never worth less than passing every secret test without solving.
     const floor = Math.max(share(base, MIN_SHARE), config.partial ? share(base, PARTIAL_SHARE) - revealPenalty : 0);
-    const points = Math.max(floor, base + timeBonus - lost);
-    return { base, timeBonus, partial: 0, submitPenalty, editPenalty, revealPenalty, lost, extraLines, points };
+    const points = Math.max(floor, base - lost);
+    return { base, timePenalty, partial: 0, submitPenalty, editPenalty, revealPenalty, lost, extraLines, points };
   }
+  const lost = submitPenalty + editPenalty + revealPenalty;
   const partial = config.partial && q.hiddenTotal ? Math.round(base * PARTIAL_SHARE * q.bestHidden / q.hiddenTotal) : 0;
-  return { base, timeBonus: 0, partial, submitPenalty, editPenalty, revealPenalty, lost, extraLines, points: Math.max(0, partial - revealPenalty) };
+  return { base, timePenalty: 0, partial, submitPenalty, editPenalty, revealPenalty, lost, extraLines, points: Math.max(0, partial - revealPenalty) };
 }
 
 /** The most a question can still score: solved right now. */
 export function worthNow(state, q, now) {
   if (q.status === 'solved') return q.breakdown;
-  return questionBreakdown(q, state.config, { solved: true, timeLeftSec: roundTimeLeftSec(state, now), durationSec: state.durationSec });
+  return questionBreakdown(q, state.config, { solved: true, timeSec: spentSec(q, state.endedAt ?? now) });
 }
 
 export const questionIndex = (state, questionId) => state.qs.findIndex((q) => q.questionId === questionId);
@@ -124,14 +127,31 @@ function rescore(state, q) {
   return { ...q, breakdown, points: breakdown.points };
 }
 
+/** A question with its clock stopped. */
+const stopClock = (q, now) => (q.openSince === null ? q
+  : { ...q, spentMs: q.spentMs + Math.max(0, now - q.openSince), openSince: null });
+
 function end(state, reason, now) {
-  return { ...state, status: 'finished', endedAt: Math.min(now, state.endsAt), endReason: reason };
+  return { ...state, status: 'finished', qs: state.qs.map((q) => stopClock(q, now)), endedAt: now, endReason: reason };
 }
 
-/** Ends the round when the clock runs out. */
-export function tick(state, now) {
-  if (state.status === 'playing' && now >= state.endsAt) return end(state, 'time', state.endsAt);
-  return state;
+/**
+ * Who has which question open: by (a player id) now has questionId open, or none
+ * (null: away, or watching the others). An open question's clock runs while anyone
+ * has it open, and not before the round starts.
+ */
+export function view(state, by, questionId, now) {
+  if (state.status !== 'playing' || (state.viewers[by] ?? null) === questionId) return state;
+  const viewers = { ...state.viewers };
+  if (questionId) viewers[by] = questionId;
+  else delete viewers[by];
+  const open = new Set(Object.values(viewers));
+  const at = Math.max(now, state.startedAt);
+  const qs = state.qs.map((q) => {
+    if (!open.has(q.questionId) || q.status !== 'open') return stopClock(q, at);
+    return q.openSince === null ? { ...q, openSince: at } : q;
+  });
+  return { ...state, viewers, qs };
 }
 
 /** The open question an action is about, or -1. */
@@ -143,11 +163,10 @@ function openQuestion(state, questionId) {
 
 /** result: { questionId, passed, total } from "Run tests" (visible tests only). */
 export function testRun(state, result, now) {
-  const timed = tick(state, now);
-  const i = openQuestion(timed, result?.questionId);
-  if (i < 0) return timed;
-  const q = timed.qs[i];
-  return withQuestion(timed, i, { ...q, testRuns: q.testRuns + 1, lastTest: { passed: result.passed, total: result.total } });
+  const i = openQuestion(state, result?.questionId);
+  if (i < 0) return state;
+  const q = state.qs[i];
+  return withQuestion(state, i, { ...q, testRuns: q.testRuns + 1, lastTest: { passed: result.passed, total: result.total } });
 }
 
 /**
@@ -155,10 +174,9 @@ export function testRun(state, result, now) {
  * Solving every question ends the round early.
  */
 export function submitResult(state, result, now) {
-  const timed = tick(state, now);
-  const i = openQuestion(timed, result?.questionId);
-  if (i < 0) return timed;
-  const q = timed.qs[i];
+  const i = openQuestion(state, result?.questionId);
+  if (i < 0) return state;
+  const q = state.qs[i];
   const solved = result.total > 0 && result.passedVisible + result.passedHidden === result.total;
   const next = {
     ...q,
@@ -171,48 +189,37 @@ export function submitResult(state, result, now) {
   };
   let updated;
   if (solved) {
-    const breakdown = questionBreakdown(next, timed.config, {
-      solved: true, timeLeftSec: roundTimeLeftSec(timed, now), durationSec: timed.durationSec,
-    });
-    updated = withQuestion(timed, i, { ...next, status: 'solved', solvedAt: now, breakdown, points: breakdown.points });
+    const stopped = stopClock(next, now);
+    const breakdown = questionBreakdown(stopped, state.config, { solved: true, timeSec: spentSec(stopped, now) });
+    updated = withQuestion(state, i, { ...stopped, status: 'solved', solvedAt: now, breakdown, points: breakdown.points });
   } else {
-    updated = withQuestion(timed, i, rescore(timed, next));
+    updated = withQuestion(state, i, rescore(state, next));
   }
   return updated.qs.every((x) => x.status === 'solved') ? end(updated, 'solved', now) : updated;
 }
 
 /** Reveal a failed secret test: { questionId, testIndex }. Only when the room allows it. */
-export function reveal(state, result, now) {
-  const timed = tick(state, now);
-  if (!(timed.config.revealCost > 0)) return timed;
-  const i = openQuestion(timed, result?.questionId);
-  if (i < 0) return timed;
-  const q = timed.qs[i];
+export function reveal(state, result) {
+  if (!(state.config.revealCost > 0)) return state;
+  const i = openQuestion(state, result?.questionId);
+  if (i < 0) return state;
+  const q = state.qs[i];
   const t = result.testIndex;
-  if (!Number.isInteger(t) || t < 0 || t > 999 || q.reveals.includes(t) || q.reveals.length >= MAX_REVEALS) return timed;
-  return withQuestion(timed, i, rescore(timed, { ...q, reveals: [...q.reveals, t] }));
+  if (!Number.isInteger(t) || t < 0 || t > 999 || q.reveals.includes(t) || q.reveals.length >= MAX_REVEALS) return state;
+  return withQuestion(state, i, rescore(state, { ...q, reveals: [...q.reveals, t] }));
 }
 
 /** Stop early: whatever is scored now is the final score. */
 export function finish(state, now) {
-  const timed = tick(state, now);
-  return timed.status === 'playing' ? end(timed, 'finished', now) : timed;
-}
-
-/** More time on the clock (everyone agreed to a time extension): { seconds }. */
-export function extend(state, seconds, now) {
-  const timed = tick(state, now);
-  if (timed.status !== 'playing' || !(seconds > 0)) return timed;
-  return { ...timed, endsAt: timed.endsAt + seconds * 1000, durationSec: timed.durationSec + seconds };
+  return state.status === 'playing' ? end(state, 'finished', now) : state;
 }
 
 export function reduceRound(state, action) {
   switch (action.type) {
-    case 'extend': return extend(state, action.seconds, action.now);
-    case 'tick': return tick(state, action.now);
+    case 'view': return view(state, action.by, action.questionId, action.now);
     case 'testRun': return testRun(state, action.result, action.now);
     case 'submitResult': return submitResult(state, action.result, action.now);
-    case 'reveal': return reveal(state, action.result, action.now);
+    case 'reveal': return reveal(state, action.result);
     case 'finish': return finish(state, action.now);
     default: return state;
   }

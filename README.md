@@ -67,9 +67,33 @@ speed bonus of up to the base again (so up to double), falling as the clock runs
   fix changes. The toolbar shows `lines changed / par` as you type.
 
 **Run tests** (the visible tests) is free: run them as often as you like. A solved question
-never drops below 20% of the base; unsolved questions score 0. The rules are the same in
-single player and duels (`scoreBreakdown` in `state/engine.js`, `questionBreakdown` in
-`state/round.js`), and the end of each question shows the breakdown.
+never drops below 20% of the base; unsolved questions score 0. The end of each question
+shows the breakdown (`scoreBreakdown` in `state/engine.js`).
+
+**Duels** have no speed bonus and no round clock. A question starts at its base and loses
+points only for the time someone on your side has it open, up to half the base by its
+usual time limit (5 / 10 / 15 minutes in Code Race, 3 / 6 / 10 in Bug Hunt), and nothing
+after that. Moving to another question, watching the others or dropping out stops its
+clock (`questionBreakdown` in `state/round.js`). The other penalties are the same.
+
+## Accounts
+
+**Log in** (top right on the home screen) has **Create account**: a username and password.
+An account keeps the player's name, settings, view preferences and personal bests, and
+merges with whatever they played on that browser as a guest (the better score wins, so
+devices never overwrite each other). Logging out clears those from the browser. Code in
+progress stays on the device.
+
+Passwords are stored only as a salted [scrypt](https://nodejs.org/api/crypto.html#cryptoscryptpassword-salt-keylen-options-callback)
+hash, and login tokens only as a SHA-256 hash. Wrong passwords are limited per address and
+per username. There is no email, so a forgotten password cannot be reset.
+
+The admin's **Accounts** tab lists every account with when it was last online and its
+games (the newest 50 are kept, and a total).
+
+Accounts are in `data/accounts.db`, or wherever `ACCOUNTS_DB` points. **That file has to be
+on a disk that survives restarts.** Render's free plan has none: every restart or redeploy
+would delete every account.
 
 ## Layout
 
@@ -123,28 +147,22 @@ per round come from the settings above) and shows a 4-letter code and a link
 (`/?room=CODE`). **🤖 Play a bot** creates a room with a practice bot in it.
 
 - **Lobby:** up to 6 players, who is ready, the match score and a chat. The host sets
-  the language, difficulty (one for the round, or **set per question**: e.g. easy, easy,
-  medium, hard, any), number of questions and three round options, and can add
-  or remove bots (easy, medium or hard). Everyone sees the same settings; only the host
-  can change them:
-  - **Round time** (5–60 minutes): one clock for the whole round. Every question is
-    open at once, and players move between them freely with the tabs along the bottom.
+  the mode (**Code Race** by default, Bug Hunt or random) and topic of every round, the
+  language, difficulty (one for the round, or **set per question**: e.g. easy, easy,
+  medium, hard, any), number of questions, teams, power-ups and two round options, and can
+  add bots (easy, medium or hard). Everyone sees the same settings; only the host can
+  change them. The host can also **remove a player** (they cannot rejoin that room) and
+  **hand the room to someone else**.
   - **Secret tests:** only a solve scores, or each secret test passed earns points
     (up to half the question) without a solve. The best submit counts.
   - **Reveal a failed test:** off, or allowed for 10%, 25% or 50% of the question's
     base points each. A revealed secret test shows its call and expected value (and what
     your code gave) and lowers the most the question can score.
-- **Teams:** each player plays on their own or picks red, green or blue. Teammates are
-  one side: one score, one state, and one live editor per question, with each other's
-  cursors. A submit from any teammate counts for the team. A Room / Team switch by the
-  chat box sends messages to the team only.
-- **Choosing the round:** the first round is a vote on the mode (Code Race, Bug Hunt or
-  random) and the topic (one of six categories, or random). If the votes differ, a coin
-  flip decides. After that, **the last-placed side chooses the next one**. After a
-  draw, everyone votes again.
+- **Teams** (off unless the host turns them on): each player plays on their own or picks
+  red, green or blue. Teammates are one side: one score, one state, and one live editor per
+  question, with each other's cursors. A submit from any teammate counts for the team. A
+  Room / Team switch by the chat box sends messages to the team only.
 - **Start now:** the host can start the round without waiting for everyone to be ready.
-  The host's shown pick counts as their vote; a missing vote is skipped (a coin flip
-  between the votes cast), and if last place has not chosen yet the round is random.
 - **Power-ups** (off unless the host turns them on; everyone gets the same uses, every round),
   from the ⚡ Power-ups button in the round header. Blackout and Wipe hit **every opponent at
   once**, so they are short and few:
@@ -162,15 +180,12 @@ per round come from the settings above) and shows a 4-letter code and a link
     solution. In Bug Hunt: which line the bug is on, or the fixed line. They show in the
     problem panel, and teammates share them.
 - **Who gets power-ups:** everyone, unless the host clicks ⚡ on / off by a player in the lobby.
-- **Time extension:** during a round, **+Time** asks everyone for 2, 5 or 10 more minutes.
-  Every other person in the room gets Agree / No (bots agree); if all agree within 30 s,
-  every side still playing gets the time. One no (or silence) and it is off. At most 3 per
-  round, and someone whose ask failed waits a minute before asking again.
 - **Playing:** when everyone is ready (or the host starts) there is a 3-second countdown, then every side gets
-  the same questions on the same clock. Under each question's title, "Worth up to N now"
-  shows the most it can still score and what wrong submits, test runs, reveals and
-  extra lines have cost. A side's round ends when the clock runs out, when it has solved
-  everything, or when it presses Finish.
+  the same questions, open at once, and moves between them freely with the tabs along the
+  bottom. Under each question's title, "Worth up to N now" shows the most it can still score
+  and what time, wrong submits, reveals and extra lines have cost. A side's round ends when
+  it has solved everything or presses Finish; the round ends when every side's has. If
+  someone is holding it up, the host can remove them from the results screen.
 - **Leaderboard:** the side panel ranks every side live (rows slide when the order
   changes), with what each is working on; the header shows your place and the gap.
   Toasts announce other sides' solves.

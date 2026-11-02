@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { io as connect } from 'socket.io-client';
 import { attachDuel } from '../server/duel.js';
 import { createSolutionStore } from '../server/solutions.js';
+import { createAccountStore } from '../server/accounts.js';
 import { createVerifier } from '../server/verify.js';
 import { createSession } from '../src/state/engine.js';
 import { getQuestion } from '../src/questions/index.js';
@@ -14,7 +15,7 @@ const admin = { username: 'admin', password: 'test-password' };
 async function setup() {
   const http = createServer();
   const solutions = createSolutionStore({ file: ':memory:' });
-  const duel = attachDuel(http, { log: () => {}, countdownMs: 0, admin, solutions, verifier: createVerifier({ prewarm: false }) });
+  const duel = attachDuel(http, { log: () => {}, countdownMs: 0, admin, solutions, accounts: createAccountStore({ file: ':memory:' }), verifier: createVerifier({ prewarm: false }) });
   await new Promise((r) => http.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${http.address().port}`;
   const sockets = [];

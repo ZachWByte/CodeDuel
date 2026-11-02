@@ -1,5 +1,5 @@
-// Duel round screen: every question of the round is open at once under one clock.
-// Tabs along the bottom switch question, and each question keeps its own code (a
+// Duel round screen: every question of the round is open at once, and each has its
+// own clock, which only runs while it is on screen. Tabs along the bottom switch question, and each question keeps its own code (a
 // team shares one live document per question, with teammates' cursors). Solving a
 // question offers the next one, or watching an opponent instead.
 import { h, setChildren, formatTime, confirmDialog } from './dom.js';
@@ -10,8 +10,8 @@ import { getQuestion, LANG_LABELS, MODE_LABELS, difficultyText } from '../questi
 import { startingCode, linesChanged, resolveTests, LANG_FAMILY } from '../judge/resolve.js';
 import { runVisibleTests, submitSolution } from '../judge/judge.js';
 import { run } from '../runners/runner.js';
-import { roundTimeLeftSec, worthNow, solvedCount } from '../state/round.js';
-import { BASE_POINTS, PENALTIES, SPEED_SHARE } from '../state/engine.js';
+import { spentSec, worthNow, solvedCount, TIME_PENALTY_SHARE } from '../state/round.js';
+import { BASE_POINTS, PENALTIES } from '../state/engine.js';
 import { loadDraft, saveDraft, clearDraft } from '../state/storage.js';
 import { icon, brandMark, clockCase } from './icons.js';
 import { markEl } from './annotate.js';
@@ -95,7 +95,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
 
   el.clock = clockCase([
     ['solved', el.solved, { className: '.face-q' }],
-    ['clock', el.timer, { lit: true, flag: true }],
+    ['this question', el.timer, { lit: true }],
     ['score', el.score],
   ]);
   el.toolbar = h('div.toolbar', {},
@@ -114,7 +114,6 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
     setChildren(el.watchPane,
       h('div.watch-head', {},
         h('h2.watch-title', {}, icon('eye'), 'Watching'),
-        h('p.muted.small', {}, 'Readable on every question you have solved (pick it above their code); scrambled on the others.'),
         h('button.btn.btn-small#btn-watch-back', { type: 'button', onclick: () => setWatching(false) }, icon('back'), 'Back to my code')),
       watch.el);
   }
@@ -238,7 +237,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
     updateHeader();
     updateButtons();
     updateMeter();
-    onView?.(q.id);
+    onView?.(q.id, watching);
     if (!watching) editor.focus();
   }
 
@@ -294,7 +293,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
       if (live[key].textContent !== text) live[key].textContent = text;
       live[key].className = kind;
     };
-    set('speed', `now +${w.timeBonus}`, 'gain');
+    set('time', w.timePenalty ? `−${w.timePenalty}` : '0', w.timePenalty ? 'cost' : '');
     set('runs', `${c.testRuns} used`);
     set('submits', c.failedSubmits ? `${c.failedSubmits} · −${w.submitPenalty}` : '0', w.submitPenalty ? 'cost' : '');
     set('lines', `${editedLines()}/${c.par}${w.editPenalty ? ` · −${w.editPenalty}` : ''}`, w.editPenalty ? 'cost' : '');
@@ -303,6 +302,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
     set('total', String(w.points), 'rules-total');
   }
   const lostTitle = (w) => [
+    w.timePenalty && `time on this question −${w.timePenalty}`,
     w.submitPenalty && `wrong submits −${w.submitPenalty}`,
     w.editPenalty && `lines over par −${w.editPenalty}`, w.revealPenalty && `tests revealed −${w.revealPenalty}`,
   ].filter(Boolean).join(', ');
@@ -318,7 +318,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
     };
     return h('dl.rules.rules-live', { 'aria-label': 'Scoring' },
       [h('dt', {}, 'Solve'), h('dd', {}, String(base))],
-      row('speed', 'Speed bonus', `up to +${base * SPEED_SHARE}, falls with the round clock`),
+      row('time', 'Time on this question', `up to −${cost(TIME_PENALTY_SHARE)}, only while it is open`),
       row('runs', 'Run tests', 'free'),
       row('submits', 'Wrong submits', `−${cost(PENALTIES.failedSubmit)} each`),
       c.par !== null ? row('lines', 'Lines changed', `par ${c.par}, then −${cost(PENALTIES.extraLine)} each`) : null,
@@ -453,7 +453,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
       markEl({ solved: true, breakdown: c.breakdown }),
       h('div', {},
         h('div.end-title.ok', {}, 'Solved'),
-        h('div.end-stats', {}, h('span', {}, `at ${formatTime(Math.round((c.solvedAt - store.getState().startedAt) / 1000))}`),
+        h('div.end-stats', {}, h('span', {}, `in ${formatTime(spentSec(c, c.solvedAt))}`),
           h('span', {}, `${c.attempts} submit${c.attempts === 1 ? '' : 's'}`))),
       h('div.end-points', {}, h('span.label', {}, 'points'), h('div.numeral.points', {}, `+${c.points}`))),
     breakdownRows(c.breakdown)];
@@ -506,11 +506,9 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
   // ---------------------------------------------------------------- header / buttons
   function updateHeader() {
     const state = store.getState();
-    const left = roundTimeLeftSec(state, Date.now());
     el.solved.textContent = `${solvedCount(state)}/${state.qs.length}`;
-    el.timer.textContent = formatTime(left);
-    el.clock.classList.toggle('clock-low', state.status === 'playing' && left <= 60);
-    el.clock.classList.toggle('clock-fallen', state.status === 'finished' && state.endReason === 'time');
+    const c = stateQ();
+    el.timer.textContent = c ? formatTime(spentSec(c, state.endedAt ?? Date.now())) : formatTime(0);
     el.score.textContent = String(state.total);
     updateWorth();
   }
@@ -529,6 +527,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
   function setWatching(on) {
     if (!watch) return;
     watching = on;
+    if (q) onView?.(q.id, on); // the question's clock waits while you watch
     for (const x of [el.teamStrip, el.editorHost, el.toolbar, el.console]) x.classList.toggle('is-away', on);
     el.watchPane.hidden = !on;
     watch.button?.classList.toggle('active', on);
@@ -707,10 +706,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
     updateMeter();
   });
 
-  const timer = setInterval(() => {
-    store.dispatch({ type: 'tick', now: Date.now() });
-    updateHeader();
-  }, 250);
+  const timer = setInterval(updateHeader, 250);
   const draftTimer = setInterval(saveDraftNow, DRAFT_EVERY_MS);
 
   // Line counts for the others, every few seconds, when they change.

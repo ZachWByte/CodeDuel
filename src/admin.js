@@ -51,7 +51,7 @@ function loginDialog(login) {
         close(true);
       },
     },
-      h('h2.login-title#login-title', {}, 'Log in'),
+      h('h2.login-title#login-title', {}, 'Admin login'),
       h('label.login-field', { for: 'admin-user' }, 'Username', user),
       h('label.login-field', { for: 'admin-pass' }, 'Password', pass),
       error,
@@ -96,6 +96,8 @@ export function createAdmin({ root, mount, showHome }) {
         onWatch: (watch) => send('admin:watch', watch ?? {}),
         loadSolutions: () => request('admin:solutions'),
         loadSolution: (questionId) => request('admin:solution', { questionId }),
+        loadAccounts: () => request('admin:accounts'),
+        loadAccount: (id) => request('admin:account', { id }),
       });
       const off = on('admin:view', (v) => {
         view = v;

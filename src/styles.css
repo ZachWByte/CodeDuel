@@ -177,13 +177,13 @@ select { cursor: pointer; }
 .info-tip a { display: inline-flex; align-items: center; gap: 3px; }
 .info-tip a .icon { width: 13px; height: 13px; }
 .account { display: inline-flex; align-items: center; gap: 6px; }
+.account-name { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 650; color: var(--g8); padding: 0 4px; }
 .start-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-top: 1px solid var(--g4); padding-top: 18px; margin-top: 4px; flex-wrap: wrap; }
 .available { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .available .clock-case .numeral { font-size: 26px; }
 .available .note { color: var(--g7); font-size: 13px; max-width: 24ch; }
 .duel-card { display: flex; flex-direction: column; gap: 14px; }
 .duel-card p { margin: 0; }
-.duel-intro { color: var(--g7); font-size: 14px; max-width: 52ch; }
 .duel-fields { display: grid; grid-template-columns: auto 1fr; gap: 10px 12px; align-items: center; }
 .duel-fields label { font-size: 14px; font-weight: 600; color: var(--g8); white-space: nowrap; }
 .duel-actions { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -212,7 +212,6 @@ select { cursor: pointer; }
 .browser-item:hover .tag, .browser-item:hover .diff, .browser-item:focus-visible .tag, .browser-item:focus-visible .diff { opacity: 1; }
 .browser-item:focus-visible { outline-offset: -2px; }
 .browser-item .best { color: var(--brass); font-size: 13px; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
-.home-footer { color: var(--g7); font-size: 13px; text-align: center; }
 
 /* ---------- game layout */
 .game { height: calc(100vh / var(--ui-zoom, 1)); display: flex; flex-direction: column; min-width: 640px; }
@@ -373,10 +372,6 @@ html[data-console-hidden='true'] .console-toggle .icon { transform: rotate(-90de
 .mark-good { color: var(--buff); }
 .mark-dubious { color: var(--brass); }
 .mark-miss { color: var(--flag-text); }
-.mark-legend { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; font-size: 13px; color: var(--g7); text-align: left; }
-.mark-legend dt { font-size: 15px; }
-.mark-legend dd { margin: 0; }
-.mark-legend strong { color: var(--g8); }
 
 /* ---------- end of question */
 .end-card { border-radius: var(--r-lg); padding: 16px 18px; margin-bottom: 18px; background: var(--g3); display: flex; flex-direction: column; gap: 10px; }
@@ -517,7 +512,6 @@ select { appearance: none; padding-right: 30px; background-image: linear-gradien
 .lobby-header { display: flex; align-items: center; gap: 18px; padding: 16px 28px 12px; }
 .lobby-header .brand-mark { width: 26px; height: 26px; border-radius: 4px; }
 .lobby-header h1 { font-size: 24px; font-weight: 850; font-stretch: 112%; letter-spacing: -0.02em; white-space: nowrap; display: flex; align-items: center; gap: 12px; }
-.lobby-header .tagline { border-left: 1px solid var(--g5); padding-left: 18px; }
 .lobby-header .btn-view { margin-left: auto; }
 .lobby-cols { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(280px, 0.95fr); gap: 0; padding: 0 28px 18px; }
 .lobby-col { min-height: 0; overflow: auto; padding: 4px 22px 8px; display: flex; flex-direction: column; gap: 18px; border-left: 1px solid var(--g4); }
@@ -531,7 +525,6 @@ select { appearance: none; padding-right: 30px; background-image: linear-gradien
 .room-link { font-size: 13px; background: none; color: var(--g7); padding: 0; }
 .match-score { margin: 0; display: flex; align-items: baseline; gap: 10px; }
 .match-score strong { font-size: 16px; font-variant-numeric: tabular-nums; }
-.pick-status { margin: 10px 0 0; font-size: 14px; }
 .players { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; }
 .player { display: flex; align-items: center; gap: 10px; padding: 12px 2px; border-bottom: 1px solid var(--g4); text-align: left; min-height: 60px; }
 .player-main { display: flex; flex-direction: column; min-width: 0; flex: 1; }
@@ -672,8 +665,7 @@ body.chat-side-open .watch-toggle > span:not(.icon) { display: none; }
   .lobby-chat { min-height: 360px; }
   .lobby-bar { position: sticky; bottom: 0; flex-wrap: wrap; padding: 10px 16px; }
   .lobby-header { flex-wrap: wrap; padding: 16px; }
-  .lobby-header .tagline { border-left: 0; padding-left: 0; order: 3; flex-basis: 100%; }
-  .lobby-who { display: none; }
+    .lobby-who { display: none; }
   .chat-side { width: 100vw; }
   body.chat-side-open .game { margin-right: 0; }
 }
@@ -715,13 +707,10 @@ body.chat-side-open .watch-toggle > span:not(.icon) { display: none; }
 .player.on-red { box-shadow: inset 3px 0 var(--team-red); padding-left: 10px; }
 .player.on-green { box-shadow: inset 3px 0 var(--team-green); padding-left: 10px; }
 .player.on-blue { box-shadow: inset 3px 0 var(--team-blue); padding-left: 10px; }
-.teams-line { margin: 12px 0 0; font-size: 14px; color: var(--g8); }
-.team-help { margin: 10px 0 0; }
 
 /* ---------- lobby settings: the same controls for everyone, read-only unless you host */
 .settings-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
 .select-field .field-name { font-size: 13px; font-weight: 650; color: var(--g8); }
-.select-field .field-help { font-size: 12px; color: var(--g7); line-height: 1.35; }
 .select-field select:disabled { opacity: 1; cursor: default; color: var(--g8); background: var(--g2); border-color: var(--g4); appearance: none; }
 
 /* ---------- the round: question tabs along the bottom */
@@ -863,6 +852,8 @@ body.chat-side-open .watch-toggle > span:not(.icon) { display: none; }
 .admin-code-head { display: flex; align-items: baseline; gap: 10px; padding: 16px 20px 10px; border-bottom: 1px solid var(--g4); }
 .admin-code-head .col-title { font-size: 18px; }
 .admin-code-head .icon-btn { margin-left: auto; align-self: center; }
+.admin-problem { flex: 0 1 45%; min-height: 0; overflow: auto; padding: 14px 20px; border-bottom: 1px solid var(--g4); font-size: 14px; }
+.admin-problem[hidden] { display: none; }
 .admin-code { flex: 1; margin: 0; overflow: auto; padding: 14px 20px; font-family: var(--mono, ui-monospace, monospace); font-size: 13px; line-height: 1.55; white-space: pre; color: var(--ink); }
 .admin-tabs { display: inline-flex; background: var(--g1); border: 1px solid var(--g4); border-radius: var(--r-sm); padding: 2px; }
 .admin-tab { font: inherit; font-size: 14px; font-weight: 650; color: var(--g8); background: none; border: 0; border-radius: 4px; padding: 4px 12px; cursor: pointer; }
@@ -943,23 +934,6 @@ body.chat-side-open .power-toggle > span:not(.icon):not(.power-count) { display:
 .spectate-q:hover { color: var(--ink); border-color: var(--g6); }
 .spectate-q.active { background: var(--buff); border-color: var(--buff); color: var(--buff-ink); }
 
-/* ---------- time extension: +Time menu, and the vote at the bottom of the screen */
-.ext-toggle .icon { color: var(--buff); }
-body.chat-side-open .ext-toggle > span:not(.icon) { display: none; }
-.ext-menu { position: fixed; z-index: 59; width: 240px; background: var(--g2); border: 1px solid var(--g5); border-radius: var(--r); padding: 10px 12px; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5); animation: fade 0.12s ease-out; }
-.ext-menu p { margin: 0 0 8px; }
-.ext-options { display: flex; gap: 6px; }
-.ext-prompt { position: fixed; left: 50%; bottom: 72px; transform: translateX(-50%); z-index: 60; display: flex; align-items: center; gap: 12px; max-width: min(640px, 92vw); background: var(--g3); border: 1px solid var(--buff); border-radius: var(--r-lg); padding: 10px 14px; box-shadow: 0 16px 44px rgba(0, 0, 0, 0.55); font-size: 14px; animation: fade 0.2s ease-out; }
-.ext-prompt > .icon { color: var(--buff); width: 20px; height: 20px; flex: none; }
-.ext-text { min-width: 0; }
-.ext-actions { display: flex; gap: 6px; flex: none; }
-.ext-time { font-size: 18px; color: var(--g8); flex: none; }
-.power-grant { display: inline-flex; align-items: center; gap: 3px; flex: none; font: inherit; font-size: 12px; font-weight: 700; color: var(--g7); background: var(--g1); border: 1px solid var(--g4); border-radius: 999px; padding: 2px 8px 2px 6px; cursor: pointer; }
-.power-grant .icon, .power-grant svg { width: 13px; height: 13px; }
-.power-grant.on { color: var(--buff-ink); background: var(--buff); border-color: var(--buff); }
-.power-grant.static { cursor: default; }
-.team-help .icon { width: 12px; height: 12px; vertical-align: -1px; color: var(--buff); }
-
 /* ---------- duel results: review the questions and everyone's answers */
 .review { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--g4); display: flex; flex-direction: column; gap: 12px; }
 .review-top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
@@ -997,4 +971,21 @@ body.chat-side-open .ext-toggle > span:not(.icon) { display: none; }
 .slot-level { display: flex; align-items: center; gap: 6px; }
 .slot-level select { flex: 1; min-width: 0; padding-top: 5px; padding-bottom: 5px; font-size: 13px; }
 .slot-n { font-weight: 800; font-size: 13px; color: var(--g8); width: 26px; flex: none; }
-.slot-help { margin: 0; }
+
+/* ---------- solo results: each question's solution */
+.results-solutions { display: flex; flex-direction: column; gap: 12px; text-align: left; }
+
+/* ---------- log in or create an account */
+.login-form[hidden] { display: none; }
+.login-switch { align-self: flex-start; }
+.login-note { margin: 0; font-size: 13px; color: var(--g7); }
+.login-admin { align-self: flex-start; background: none; border: 0; padding: 0; font: inherit; font-size: 13px; color: var(--g7); cursor: pointer; text-decoration: underline; }
+.login-admin:hover { color: var(--ink); }
+
+/* ---------- admin: an account's recent games */
+.account-game { display: grid; grid-template-columns: minmax(0, 1fr) auto auto 70px; align-items: center; gap: 14px; padding: 10px 20px; border-bottom: 1px solid var(--g4); }
+.account-game p { margin: 2px 0 0; }
+.account-game .sol-when { text-align: right; }
+.game-result { font-size: 12px; font-weight: 700; text-transform: capitalize; color: var(--g8); }
+.game-won { color: var(--mint, var(--ink)); }
+.game-lost, .game-left { color: var(--flag-text); }

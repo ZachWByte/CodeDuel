@@ -18,6 +18,8 @@
 //   admin:watch { kind: 'solo' | 'duel', id, room? }  whose code to send (null: nobody)
 //   admin:solutions                    -> { questions: [{ questionId, title, count, latestAt }], stats }
 //   admin:solution { questionId }      -> { questionId, title, solutions: [...] } (newest first, with code)
+//   admin:accounts                     -> { accounts: [{ id, username, online, lastSeenAt, gamesPlayed, createdAt }] }
+//   admin:account { id }               -> { games: [...] } (newest first)
 // Server -> admin:
 //   admin:view { serverNow, solos, rooms, watched }   about once a second, when it changed
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -73,13 +75,16 @@ function soloSummary(state, delta) {
 }
 
 /**
- * attachAdmin(io, { duel: { rooms(), code(room, playerId) }, solutions, log, username, password })
+ * attachAdmin(io, { duel: { rooms(), code(room, playerId) }, solutions, accounts, accountLinks, log, username, password })
  * solutions: the store solves are saved in (server/solutions.js), or null.
+ * accounts, accountLinks: player accounts and who is online (server/accounts.js), or null.
  * -> { solos, close() }
  */
 export function attachAdmin(io, {
   duel,
   solutions = null,
+  accounts = null,
+  accountLinks = null,
   log = console.log,
   username = process.env.ADMIN_USERNAME || 'admin',
   password = process.env.ADMIN_PASSWORD || '123456',
@@ -168,6 +173,14 @@ export function attachAdmin(io, {
       const summary = soloSummary(state, delta);
       if (!summary) return;
       let s = solos.get(token);
+      // A solo session that just ended goes in a logged-in player's recent games.
+      const accountId = socket.data.accountId;
+      if (accounts && accountId && summary.status === 'finished' && s?.summary?.status === 'playing') {
+        accounts.recordGame(accountId, {
+          kind: summary.practice ? 'practice' : 'solo', lang: summary.lang, mode: summary.mode, difficulty: summary.difficulty,
+          questions: summary.count, solved: summary.solved, points: summary.total,
+        });
+      }
       if (!s) {
         s = { id: randomBytes(4).toString('hex'), code: null };
         solos.set(token, s);
@@ -241,6 +254,18 @@ export function attachAdmin(io, {
       if (!isAdmin()) return { error: 'Log in as admin first.' };
       if (!solutions) return { questions: [], stats: null };
       return { questions: solutions.questions().map((x) => ({ ...x, title: titleOf(x.questionId) })), stats: solutions.stats() };
+    });
+
+    handle('admin:accounts', () => {
+      if (!isAdmin()) return { error: 'Log in as admin first.' };
+      const online = accountLinks?.onlineIds() ?? new Set();
+      return { accounts: (accounts?.list() ?? []).map((a) => ({ ...a, online: online.has(a.id) })) };
+    });
+
+    handle('admin:account', ({ id }) => {
+      if (!isAdmin()) return { error: 'Log in as admin first.' };
+      if (!Number.isInteger(id)) return { error: 'Which account?' };
+      return { games: accounts?.games(id) ?? [] };
     });
 
     handle('admin:solution', ({ questionId }) => {

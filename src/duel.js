@@ -7,7 +7,6 @@ import { renderDuelResults } from './ui/duel-results.js';
 import { createChatDock } from './ui/chat.js';
 import { createSpectator } from './ui/spectate.js';
 import { createPowerups } from './ui/powerups.js';
-import { createExtension } from './ui/extension.js';
 import { createReview } from './ui/review.js';
 import { createLeaderboard, standingText, standings, mySide, titleOf } from './ui/leaderboard.js';
 import { icon } from './ui/icons.js';
@@ -28,17 +27,15 @@ function rebase(state, delta) {
   return {
     ...state,
     startedAt: state.startedAt + delta,
-    endsAt: state.endsAt + delta,
     endedAt: at(state.endedAt),
-    qs: state.qs.map((q) => ({ ...q, solvedAt: at(q.solvedAt) })),
+    qs: state.qs.map((q) => ({ ...q, solvedAt: at(q.solvedAt), openSince: at(q.openSince) })),
   };
 }
 
 /**
  * Same interface as the single-player store. Actions apply locally straight away
  * and go to the server, whose state replaces ours once it has seen them all.
- * Ticks stay local: the server runs its own clock. Teammates' actions arrive in the
- * server's state.
+ * Teammates' actions arrive in the server's state.
  */
 function createRemoteStore(initial, lastSeq) {
   let state = initial;
@@ -54,7 +51,7 @@ function createRemoteStore(initial, lastSeq) {
   return {
     getState: () => state,
     dispatch(action) {
-      if (action.type !== 'tick') send('duel:action', { type: action.type, result: action.result, seq: ++sent });
+      send('duel:action', { type: action.type, result: action.result, seq: ++sent });
       set(reduceRound(state, action));
     },
     /** Server state, ignored while it has not caught up with our own actions. */
@@ -96,10 +93,6 @@ export function createDuel({ root, mount, showHome }) {
   let listening = false;
   const watches = new Map(); // playerId -> what the server lets us see of their code
   const banner = h('div.conn-banner', { hidden: true }, 'Connection lost — reconnecting to the game server…');
-  const extension = createExtension({
-    onAsk: (minutes) => request('duel:extend', { minutes }),
-    onVote: (yes) => request('duel:extendVote', { yes }),
-  });
   const chat = createChatDock({
     onSend: (text, team) => send('duel:chat', { text, team }),
     onVoice: (audio, seconds, team) => request('duel:voice', { audio, seconds, team }),
@@ -117,6 +110,7 @@ export function createDuel({ root, mount, showHome }) {
       screen?.serverSaid?.(questionId, message);
     });
     onWatch(receiveWatch);
+    on('duel:kicked', () => { if (engaged) goHome('The host removed you from the room.'); });
     on('duel:wipe', ({ questionId, code, by }) => {
       if (!engaged || screen?.kind !== 'game') return;
       screen.wipe?.(questionId, code);
@@ -155,7 +149,6 @@ export function createDuel({ root, mount, showHome }) {
     banner.hidden = true;
     chat.detach();
     chat.setLog([]);
-    extension.update(null);
     if (message) toast(message);
     showHome();
   }
@@ -174,7 +167,6 @@ export function createDuel({ root, mount, showHome }) {
     room = {
       ...snap,
       powers: snap.powers ? { ...snap.powers, blackoutReadyAt: at(snap.powers.blackoutReadyAt) } : null,
-      extension: snap.extension ? { ...snap.extension, until: at(snap.extension.until) } : null,
       players: snap.players.map((p) => ({ ...p, state: rebase(p.state, delta), blackedUntil: at(p.blackedUntil), keyboardUntil: at(p.keyboardUntil) })),
     };
     markInDuel(true);
@@ -182,7 +174,6 @@ export function createDuel({ root, mount, showHome }) {
     chat.setTeam(room.players.find((p) => p.id === room.youId)?.team ?? null);
     if (new URLSearchParams(location.search).has('room')) history.replaceState(null, '', location.pathname);
     route();
-    extension.update(room);
   }
 
   const me = () => room.players.find((p) => p.id === room.youId);
@@ -226,11 +217,12 @@ export function createDuel({ root, mount, showHome }) {
       onConfig: (config) => request('duel:config', { config }),
       onPick: (pick) => request('duel:pick', pick),
       onReady: (ready) => request('duel:ready', { ready }),
-      onStart: (pick) => request('duel:start', { pick }),
+      onStart: () => request('duel:start'),
       onTeam: (team, playerId) => request('duel:team', { team, playerId }),
       onGrant: (playerId, on) => request('duel:grant', { playerId, on }),
       onAddBot: (level) => request('duel:addBot', { level }),
-      onRemoveBot: (id) => request('duel:removeBot', { id }),
+      onKick: (playerId) => request('duel:kick', { playerId }),
+      onHost: (playerId) => request('duel:host', { playerId }),
       onLeave: leave,
     });
   }
@@ -242,6 +234,7 @@ export function createDuel({ root, mount, showHome }) {
       room,
       onNext: () => request('duel:next'),
       onLeave: leave,
+      onKick: (playerId) => request('duel:kick', { playerId }),
       chatToggle: chat.toggle,
       watch: { el: spectator.el, update: (r) => spectator.update(r, watches) },
       review,
@@ -310,11 +303,11 @@ export function createDuel({ root, mount, showHome }) {
     view = renderRound(root, {
       store,
       resumed: restore,
-      headerExtra: h('div.hdr-duel', {}, standing, extension.button, powerups.button, watchBtn, chat.toggle),
+      headerExtra: h('div.hdr-duel', {}, standing, powerups.button, watchBtn, chat.toggle),
       watch: { el: spectator.el, button: watchBtn },
       team,
       hintsFor: (questionId) => room.hints?.[questionId] ?? null,
-      onView: (questionId) => send('duel:view', { questionId }),
+      onView: (questionId, away) => send('duel:view', { questionId, away }),
       onProgress: (questionId, lines) => send('duel:progress', { questionId, lines }),
       onCode: (questionId, code) => send('duel:code', { questionId, code }),
       onQuit: leave,
@@ -377,7 +370,6 @@ export function createDuel({ root, mount, showHome }) {
       h('div.countdown-box', {},
         h('div.muted', {}, `Round ${room.round}`),
         info ? h('h2', {}, `${MODE_LABELS[info.mode]} · ${CATEGORIES[info.category]?.label}`) : null,
-        info ? h('p.muted', {}, info.note) : null,
         h('div.clock-case', {}, h('div.face.face-lit', {}, h('span.label', {}, 'starts in'), num))));
     const tickDown = () => {
       const left = Math.ceil((startsAt - Date.now()) / 1000);

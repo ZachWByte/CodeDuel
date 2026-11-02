@@ -10,7 +10,7 @@
 import { h, setChildren, toast } from './dom.js';
 import { icon } from './icons.js';
 
-const QUICK = ['gg', '👏', '🔥', '😅', 'nice one', 'good luck!'];
+const QUICK = ['gg', 'nice one', 'good luck!'];
 const PREVIEW_MS = 4000;
 const VOICE_MAX_S = 15;
 const VOICE_MIN_S = 0.5;

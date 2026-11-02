@@ -2,13 +2,13 @@
 // same messages), so it also exercises the real protocol. It does not run code:
 // it works through the round's questions in order and, for each, plans how long
 // it "takes", how many test runs and wrong submits it makes, and whether it solves
-// it at all, from its level, until the round clock would run out.
+// it at all, from its level.
 //
 // Used by the server ("Add bot" in the lobby) and by scripts/bot.mjs, which can
 // join a room on any server, e.g. one deployed on Render.
 import { io } from 'socket.io-client';
 import { randomBytes } from 'node:crypto';
-import { getQuestion, CATEGORIES, MODE_LABELS } from '../src/questions/index.js';
+import { getQuestion } from '../src/questions/index.js';
 import { resolveTests, startingCode, linesChanged, LANG_FAMILY } from '../src/judge/resolve.js';
 import { timeLimitFor } from '../src/state/engine.js';
 
@@ -69,7 +69,7 @@ export function startBot({ url, code, level = 'medium', token, name, speed = 1, 
   let stopped = false;
   let delta = 0; // our clock - server clock
   let planned = 0; // the round we have planned
-  let lastPick = ''; // the pick state we last answered
+  let lastLobby = ''; // the lobby state we last answered
   let roundOver = 0; // the last round we said gg for
   let theirSolved = new Map(); // other side -> solved count
   let resolveDone;
@@ -139,20 +139,11 @@ export function startBot({ url, code, level = 'medium', token, name, speed = 1, 
 
   function onLobby() {
     const me = room.players.find((p) => p.id === room.youId);
-    const { pickerId, votes } = room.pick;
-    const mustPick = (pickerId === null || pickerId === me.id) && !votes[me.id];
     // Re-plan only when what we have to do changes (other updates arrive all the time).
-    const key = `${room.round}:${pickerId}:${mustPick}:${me.ready}`;
-    if (key === lastPick) return;
-    lastPick = key;
+    const key = `${room.round}:${me.ready}`;
+    if (key === lastLobby) return;
+    lastLobby = key;
     clearPlans();
-    if (mustPick) {
-      // After a loss pick a specific topic; in a vote usually go random.
-      const choice = pickerId === me.id || Math.random() < 0.4
-        ? { mode: pick(Object.keys(MODE_LABELS)), category: pick(Object.keys(CATEGORIES)) }
-        : { mode: 'random', category: 'random' };
-      later(1200 + Math.random() * 1500, () => socket.emit('duel:pick', choice));
-    }
     if (!me.ready) later(2000 + Math.random() * 1500, () => socket.emit('duel:ready', { ready: true }));
   }
 
@@ -186,26 +177,23 @@ export function startBot({ url, code, level = 'medium', token, name, speed = 1, 
 
   /**
    * Plans the whole round: the questions in order, each taking a share of its usual
-   * time limit, with test runs, wrong submits and (maybe) a solve, until the round
-   * clock would run out.
+   * time limit, with test runs, wrong submits and (maybe) a solve.
    */
   function planRound(s) {
     const startIn = s.startedAt + delta - Date.now(); // the countdown, if any
     // later() divides by speed; the countdown is real time, so undo that for it.
     const at = (ms) => startIn * speed + ms;
-    const roundMs = s.durationSec * 1000;
     let t = 0;
     for (const meta of s.questions) {
       const q = getQuestion(meta.id);
       const limitMs = timeLimitFor(q) * 1000;
       const solves = Math.random() < cfg.solve[q.difficulty];
       const spend = solves ? between(cfg.pace) * limitMs : 0.6 * limitMs;
-      if (t + spend > roundMs * 0.97) break;
       planQuestion(s, q, (share) => at(t + share * spend), solves);
       t += spend + 1500 + Math.random() * 2500;
     }
-    // Nothing left it can do: stop, so nobody waits for the clock on its account.
-    later(at(Math.min(t, roundMs * 0.98)), () => act('finish'));
+    // Nothing left it can do: stop, so nobody waits on its account.
+    later(at(t), () => act('finish'));
   }
 
   /** One question's moves; when(share) is the time a share of the way through it. */

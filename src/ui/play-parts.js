@@ -116,7 +116,9 @@ export function breakdownRows(b) {
   const row = (label, value, kind = '') => [h('dt', {}, label), h(`dd${kind}`, {}, value)];
   return h('dl.rules', { 'aria-label': 'How this score was worked out' },
     row('Solve', b.base),
-    b.partial ? row('Secret tests passed', `+${b.partial}`, '.gain') : row('Speed bonus', `+${b.timeBonus}`, '.gain'),
+    b.partial ? row('Secret tests passed', `+${b.partial}`, '.gain') : null,
+    b.timeBonus ? row('Speed bonus', `+${b.timeBonus}`, '.gain') : null,
+    b.timePenalty ? row('Time on this question', `−${b.timePenalty}`, '.cost') : null,
     b.submitPenalty ? row('Wrong submits', `−${b.submitPenalty}`, '.cost') : null,
     b.editPenalty ? row('Lines over par', `−${b.editPenalty}`, '.cost') : null,
     b.revealPenalty ? row('Tests revealed', `−${b.revealPenalty}`, '.cost') : null);

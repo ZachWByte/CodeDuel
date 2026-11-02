@@ -1,46 +1,82 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRound, reduceRound, roundTimeLeftSec, worthNow, questionBreakdown, rankSides } from '../src/state/round.js';
+import { createRound, reduceRound, spentSec, worthNow, questionBreakdown, rankSides } from '../src/state/round.js';
 
 const qs = [
   { id: 'CR-E01', mode: 'code-race', difficulty: 'easy' },
   { id: 'CR-M01', mode: 'code-race', difficulty: 'medium' },
 ];
-const config = { lang: 'python', mode: 'code-race', difficulty: 'mixed', count: 2, minutes: 10 };
+const config = { lang: 'python', mode: 'code-race', difficulty: 'mixed', count: 2 };
 const pass = (id) => ({ questionId: id, passedVisible: 2, passedHidden: 4, total: 6, totalHidden: 4 });
 const partly = (id, hidden) => ({ questionId: id, passedVisible: 2, passedHidden: hidden, total: 6, totalHidden: 4 });
 const act = (s, type, result, now) => reduceRound(s, { type, result, now });
+const open = (s, by, questionId, now) => reduceRound(s, { type: 'view', by, questionId, now });
 
-test('one clock for the round; questions are solved in any order', () => {
+test('questions are solved in any order; every question solved ends the round', () => {
   let s = createRound({ config, questions: qs, now: 0 });
-  assert.equal(s.durationSec, 600);
-  assert.equal(roundTimeLeftSec(s, 150_000), 450);
-  // The second question first, with a quarter of the round gone: 200 + 150.
-  s = act(s, 'submitResult', pass('CR-M01'), 150_000);
+  assert.equal(s.endsAt, undefined, 'no clock for the round');
+  // The second question first, after 5 of its usual 10 minutes on it: 200 - 50.
+  s = open(s, 'ada', 'CR-M01', 0);
+  s = act(s, 'submitResult', pass('CR-M01'), 300_000);
   assert.equal(s.qs[1].status, 'solved');
-  assert.equal(s.qs[1].points, 350);
-  assert.equal(s.total, 350);
+  assert.equal(s.qs[1].points, 150);
+  assert.equal(s.total, 150);
   assert.equal(s.status, 'playing');
-  s = act(s, 'submitResult', partly('CR-E01', 1), 160_000);
+  // Nobody has the first one open yet, so all that time cost it nothing: 100 - 10 (one wrong submit).
+  s = act(s, 'submitResult', partly('CR-E01', 1), 310_000);
   assert.equal(s.qs[0].failedSubmits, 1);
   assert.equal(s.qs[0].points, 0, 'no partial credit unless the room turns it on');
-  s = act(s, 'submitResult', pass('CR-E01'), 300_000);
-  // 100 + 50 - 10 (one wrong submit); every question solved ends the round.
-  assert.equal(s.qs[0].points, 140);
+  s = act(s, 'submitResult', pass('CR-E01'), 320_000);
+  assert.equal(s.qs[0].points, 90);
   assert.equal(s.status, 'finished');
   assert.equal(s.endReason, 'solved');
-  assert.equal(s.total, 490);
+  assert.equal(s.total, 240);
+  assert.equal(act(s, 'finish', undefined, 330_000), s, 'nothing changes after the end');
 });
 
-test('the clock ends the round and nothing counts after it', () => {
-  let s = createRound({ config, questions: qs, now: 0 });
-  s = act(s, 'tick', undefined, 600_000);
-  assert.equal(s.status, 'finished');
-  assert.equal(s.endReason, 'time');
-  const after = act(s, 'submitResult', pass('CR-E01'), 600_001);
-  assert.equal(after.total, 0);
-  assert.equal(roundTimeLeftSec(after, 900_000), 0);
+test('only the open question loses points, and gently', () => {
+  let s = createRound({ config, questions: qs, now: 1000 });
+  s = open(s, 'ada', 'CR-E01', 0); // during the countdown: starts at the round's start
+  assert.equal(s.qs[0].openSince, 1000);
+  s = open(s, 'ada', 'CR-M01', 151_000); // 150 s on the first, half of its 5 minutes
+  assert.equal(spentSec(s.qs[0], 400_000), 150, 'it stopped when they moved on');
+  assert.equal(worthNow(s, s.qs[0], 400_000).timePenalty, 25);
+  assert.equal(worthNow(s, s.qs[0], 400_000).points, 75);
+  // Back to the first: it carries on from where it was.
+  s = open(s, 'ada', 'CR-E01', 400_000);
+  assert.equal(spentSec(s.qs[1], 900_000), 249, 'the second kept its time');
+  assert.equal(spentSec(s.qs[0], 410_000), 160);
+  // However long it takes, time alone costs at most half.
+  assert.equal(worthNow(s, s.qs[0], 99_000_000).timePenalty, 50);
+  assert.equal(worthNow(s, s.qs[0], 99_000_000).points, 50);
+  // Away (null): no question's clock runs.
+  s = open(s, 'ada', null, 410_000);
+  assert.equal(spentSec(s.qs[0], 900_000), 160);
 });
+
+test('a question’s clock runs while any teammate has it open', () => {
+  let s = createRound({ config, questions: qs, now: 0 });
+  s = open(s, 'ada', 'CR-E01', 0);
+  s = open(s, 'bob', 'CR-E01', 10_000);
+  s = open(s, 'ada', 'CR-M01', 20_000);
+  assert.equal(spentSec(s.qs[0], 30_000), 30, 'Bob is still on it');
+  s = open(s, 'bob', 'CR-M01', 30_000);
+  assert.equal(spentSec(s.qs[0], 90_000), 30);
+  assert.equal(spentSec(s.qs[1], 40_000), 20, 'not counted twice');
+});
+
+test('a solved question and a finished round stop the clock', () => {
+  let s = createRound({ config, questions: qs, now: 0 });
+  s = open(s, 'ada', 'CR-E01', 0);
+  s = act(s, 'submitResult', pass('CR-E01'), 30_000);
+  assert.equal(s.qs[0].openSince, null);
+  assert.equal(spentSec(s.qs[0], 90_000), 30);
+  s = open(s, 'ada', 'CR-M01', 30_000);
+  s = act(s, 'finish', undefined, 60_000);
+  assert.equal(spentSec(s.qs[1], 90_000), 30);
+  assert.equal(open(s, 'ada', 'CR-E01', 90_000), s, 'nothing changes after the end');
+});
+
 
 test('partial credit: secret tests passed earn points, the best submit counts', () => {
   const cfg = { ...config, partial: true };
@@ -61,27 +97,28 @@ test('partial credit: secret tests passed earn points, the best submit counts', 
 test('revealing a failed secret test costs a share of the question', () => {
   const cfg = { ...config, revealCost: 0.25 };
   let s = createRound({ config: cfg, questions: qs, now: 0 });
-  assert.equal(worthNow(s, s.qs[0], 0).points, 200);
+  assert.equal(worthNow(s, s.qs[0], 0).points, 100);
   s = act(s, 'reveal', { questionId: 'CR-E01', testIndex: 4 }, 1000);
   s = act(s, 'reveal', { questionId: 'CR-E01', testIndex: 4 }, 1000);
   assert.deepEqual(s.qs[0].reveals, [4], 'the same test is revealed once');
   const worth = worthNow(s, s.qs[0], 1000);
   assert.equal(worth.revealPenalty, 25);
-  assert.equal(worth.points, 200 - 25);
+  assert.equal(worth.points, 100 - 25);
   // Reveals are off when the room does not allow them.
   const off = act(createRound({ config, questions: qs, now: 0 }), 'reveal', { questionId: 'CR-E01', testIndex: 4 }, 1);
   assert.deepEqual(off.qs[0].reveals, []);
 });
 
-test('worth-now falls with the clock and shows what was lost (test runs are free)', () => {
+test('worth-now falls with the question’s clock and shows what was lost (test runs are free)', () => {
   let s = createRound({ config, questions: qs, now: 0 });
+  s = open(s, 'ada', 'CR-E01', 0);
   s = act(s, 'testRun', { questionId: 'CR-E01', passed: 1, total: 2 }, 0);
   s = act(s, 'testRun', { questionId: 'CR-E01', passed: 2, total: 2 }, 0);
   s = act(s, 'submitResult', partly('CR-E01', 3), 0);
-  const w = worthNow(s, s.qs[0], 300_000);
-  assert.equal(w.timeBonus, 50);
-  assert.equal(w.lost, 10, 'only the wrong submit');
-  assert.equal(w.points, 100 + 50 - 10);
+  const w = worthNow(s, s.qs[0], 150_000);
+  assert.equal(w.timePenalty, 25);
+  assert.equal(w.lost, 35, 'the time and the wrong submit');
+  assert.equal(w.points, 100 - 35);
   assert.equal(questionBreakdown(s.qs[0], s.config, { solved: false }).points, 0);
 });
 

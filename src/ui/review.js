@@ -15,6 +15,19 @@ function fingerprint(room) {
   return `${room.round}|${room.status}|${[...new Set(sides)].sort().join(',')}`;
 }
 
+/**
+ * A question's reference solution (and, in Bug Hunt, the bug). view(code, lang, lines?)
+ * makes a code viewer and returns its element.
+ */
+export function solutionView(q, lang, view) {
+  const fam = LANG_FAMILY[lang];
+  return [
+    q.mode === 'bug-hunt' ? h('p.bug-explanation', {}, h('strong', {}, 'The bug: '), q.bugExplanation) : null,
+    q.mode === 'bug-hunt' ? [h('p.muted.small', {}, 'Original code, bug highlighted:'), view(startingCode(q, lang), lang, q.bugLines?.[fam] ?? [])] : null,
+    view(q.solution[fam], lang),
+  ];
+}
+
 /** createReview({ load() -> Promise<{ questions } | { error }> }) -> { el, update(room), destroy() } */
 export function createReview({ load }) {
   const el = h('section.review', { 'aria-label': 'Review the questions' });
@@ -25,7 +38,6 @@ export function createReview({ load }) {
   let loading = false;
   let viewers = [];
   let retry = 0; // timer: the server had not seen us finish yet
-  const shown = new Set(); // question ids whose reference solution is open
 
   const clearViewers = () => {
     viewers.forEach((v) => v.destroy());
@@ -78,17 +90,12 @@ export function createReview({ load }) {
       return;
     }
     const lang = room.config.lang;
-    const fam = LANG_FAMILY[lang];
     index = Math.min(index, data.questions.length - 1);
     const item = data.questions[index];
     const q = getQuestion(item.id);
-    const mine = item.answers.find((a) => a.you);
-    const open = shown.has(q.id);
 
     setChildren(el,
-      h('div.review-top', {},
-        h('h3.section-title', {}, 'Review the questions'),
-        h('p.muted.small', {}, 'Read each question again, and how everyone answered it.')),
+      h('div.review-top', {}, h('h3.section-title', {}, 'Review the questions')),
       h('div.review-tabs', { role: 'tablist' }, data.questions.map((x, i) => {
         const you = x.answers.find((a) => a.you);
         return h(`button.review-tab${i === index ? '.active' : ''}`, {
@@ -105,13 +112,8 @@ export function createReview({ load }) {
           // Yours first, then the others.
           [...item.answers].sort((a, b) => Number(b.you) - Number(a.you)).map((a) => answerCard(a, lang)),
           h('article.review-answer.review-reference', {},
-            h('header.review-head', {}, icon('eye'), h('strong', {}, 'Reference solution'),
-              h('button.btn.btn-small', { type: 'button', onclick: () => { if (open) shown.delete(q.id); else shown.add(q.id); draw(); } }, open ? 'Hide' : 'Show')),
-            open ? [
-              q.mode === 'bug-hunt' ? h('p.bug-explanation', {}, h('strong', {}, 'The bug: '), q.bugExplanation) : null,
-              q.mode === 'bug-hunt' ? [h('p.muted.small', {}, 'Original code, bug highlighted:'), viewer(startingCode(q, lang), lang, q.bugLines?.[fam] ?? [])] : null,
-              viewer(q.solution[fam], lang),
-            ] : (mine?.status === 'solved' ? null : h('p.muted.small', {}, 'Hidden until you ask, in case you want to try it again first.'))))));
+            h('header.review-head', {}, icon('eye'), h('strong', {}, 'Solution')),
+            solutionView(q, lang, viewer)))));
   }
 
   return {

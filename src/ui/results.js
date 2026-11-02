@@ -3,7 +3,9 @@ import { h, setChildren, formatTime } from './dom.js';
 import { getQuestion, LANG_LABELS, MODE_LABELS, DIFFICULTY_LABELS } from '../questions/index.js';
 import { loadSessionBest, saveSessionBestIfBetter } from '../state/storage.js';
 import { icon, clockCase } from './icons.js';
-import { markEl, markLegend } from './annotate.js';
+import { markEl } from './annotate.js';
+import { createViewer } from '../editor/editor.js';
+import { solutionView } from './review.js';
 
 const STATUS_TEXT = { solved: 'Solved', timeout: 'Time up', skipped: 'Skipped' };
 
@@ -12,6 +14,13 @@ export function renderResults(root, { state, onPlayAgain, onHome }) {
   const previousBest = config.practice ? null : loadSessionBest(config);
   const newBest = !config.practice && saveSessionBestIfBetter(config, state.total);
   const solved = state.results.filter((r) => r.solved).length;
+  const viewers = [];
+  const toCreate = [];
+  const viewer = (code, lang, highlightLines) => {
+    const host = h('div.viewer.review-code', {});
+    toCreate.push(() => viewers.push(createViewer(host, { doc: code, lang, highlightLines })));
+    return host;
+  };
 
   setChildren(root, h('div.results-screen', {},
     h('div.card.results-card', {},
@@ -39,10 +48,18 @@ export function renderResults(root, { state, onPlayAgain, onHome }) {
             h('td.num', {}, r.points));
         })),
         h('tfoot', {}, h('tr', {}, h('td', { colspan: 5 }, 'Total'), h('td.num', {}, state.total)))),
-      markLegend(),
+      h('section.results-solutions', { 'aria-label': 'Solutions' },
+        h('h3.section-title', {}, state.results.length === 1 ? 'Solution' : 'Solutions'),
+        state.results.map((r, i) => {
+          const q = getQuestion(r.questionId);
+          return h('article.review-answer.review-reference', {},
+            h('header.review-head', {}, h('strong', {}, `Q${i + 1} · ${q.title}`)),
+            solutionView(q, config.lang, viewer));
+        })),
       h('div.results-actions', {},
         h('button.btn.btn-primary#btn-again', { onclick: onPlayAgain }, 'Play again'),
         h('button.btn#btn-home', { onclick: onHome }, 'Home')))));
-  root.querySelector('#btn-again')?.focus();
-  return () => {};
+  toCreate.forEach((create) => create());
+  root.querySelector('#btn-again')?.focus({ preventScroll: true });
+  return () => viewers.forEach((v) => v.destroy());
 }

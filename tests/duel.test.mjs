@@ -6,6 +6,7 @@ import { io as connect } from 'socket.io-client';
 import { attachDuel, validConfig, validPick, audioType } from '../server/duel.js';
 import { createSolutionStore } from '../server/solutions.js';
 import { createVerifier } from '../server/verify.js';
+import { createAccountStore } from '../server/accounts.js';
 import { getQuestion, BANK_VERSION } from '../src/questions/index.js';
 import { resolveTests, startingCode } from '../src/judge/resolve.js';
 
@@ -17,7 +18,7 @@ async function setup(options = {}) {
   const solutions = createSolutionStore({ file: ':memory:' });
   // No start-up preload of py-slang in tests: dozens of servers come and go.
   const verifier = createVerifier({ prewarm: false });
-  const duel = attachDuel(http, { log: process.env.DUEL_LOG ? console.log : () => {}, countdownMs: 0, solutions, verifier, ...options });
+  const duel = attachDuel(http, { log: process.env.DUEL_LOG ? console.log : () => {}, countdownMs: 0, solutions, verifier, accounts: createAccountStore({ file: ':memory:' }), ...options });
   await new Promise((r) => http.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${http.address().port}`;
   const clients = [];
@@ -87,7 +88,6 @@ async function pair(client) {
 
 async function startRound(a, b, pick = raceLists) {
   await a.request('duel:pick', pick);
-  await b.request('duel:pick', pick);
   await a.request('duel:ready', { ready: true });
   await b.request('duel:ready', { ready: true });
   return a.until((r) => r.status === 'playing');
@@ -95,10 +95,9 @@ async function startRound(a, b, pick = raceLists) {
 
 test('settings and picks are validated', () => {
   const off = { blackout: 0, wipe: 0, keyboard: 0, hints: 0 };
-  const full = { ...config, minutes: 15, partial: false, revealCost: 0, powerups: off };
+  const full = { ...config, teams: false, partial: false, revealCost: 0, powerups: off };
   assert.deepEqual(validConfig({ ...config, mode: 'x' }), full, 'round options take their defaults');
-  assert.deepEqual(validConfig({ ...config, minutes: 20, partial: true, revealCost: 0.25 }), { ...full, minutes: 20, partial: true, revealCost: 0.25 });
-  assert.equal(validConfig({ ...config, minutes: 7 }), null);
+  assert.deepEqual(validConfig({ ...config, teams: true, partial: true, revealCost: 0.25 }), { ...full, teams: true, partial: true, revealCost: 0.25 });
   assert.equal(validConfig({ ...config, revealCost: 0.3 }), null);
   assert.equal(validConfig({ ...config, lang: 'toString' }), null);
   assert.equal(validConfig({ ...config, count: 7 }), null);
@@ -116,23 +115,22 @@ test('settings and picks are validated', () => {
   assert.equal(validConfig({ ...config, powerups: { wipe: 3 } }), null);
 });
 
-test('a round starts when both have voted and are ready, and the loser picks next', async () => {
+test('a round starts when everyone is ready, with the host’s pick for every round', async () => {
   const { client, close } = await setup();
   try {
     const { a, b } = await pair(client);
-    assert.equal(a.room.pick.pickerId, null, 'the first round is a vote');
-
+    assert.deepEqual(a.room.pick, { mode: 'code-race', category: 'random' }, 'Code Race by default');
+    assert.match((await b.request('duel:pick', raceLists)).error, /Only the host/);
     await a.request('duel:pick', raceLists);
     await a.request('duel:ready', { ready: true });
+    assert.equal(a.room.status, 'lobby', 'Bob is not ready yet');
     await b.request('duel:ready', { ready: true });
-    assert.equal(a.room.status, 'lobby', 'Bob has not voted yet');
-    await b.request('duel:pick', { mode: 'code-race', category: 'lists' });
     const ra = await a.until((r) => r.status === 'playing');
     assert.equal(ra.roundInfo.mode, 'code-race');
     assert.equal(ra.roundInfo.category, 'lists');
     const qid = firstQ(ra);
     assert.equal(firstQ(await b.until((r) => r.status === 'playing')), qid, 'same question');
-    assert.equal(me(ra).state.durationSec, 15 * 60, 'one clock for the round');
+    assert.equal(me(ra).state.endsAt, undefined, 'no clock for the round');
 
     // Ada checks her tests, then solves (that is every question, so she is done); Bob stops.
     const { visible } = counts(qid);
@@ -147,17 +145,120 @@ test('a round starts when both have voted and are ready, and the loser picks nex
     assert.equal(done.wins[named(done, 'Ada').id], 1);
     assert.ok(a.chat.some((m) => m.fromId === null && m.text.includes('Ada wins round 1')));
 
-    // Next round: Bob lost, so only Bob picks.
+    // Next round: Bob came last, but the host still chooses.
     await b.request('duel:next');
     const lobby = await a.until((r) => r.status === 'lobby');
-    assert.equal(lobby.pick.pickerId, named(lobby, 'Bob').id);
-    assert.match((await a.request('duel:pick', raceLists)).error, /Bob chooses/);
-    await b.request('duel:pick', { mode: 'bug-hunt', category: 'random' });
+    assert.deepEqual(lobby.pick, raceLists, 'the pick stays for the next round');
+    assert.match((await b.request('duel:pick', raceLists)).error, /Only the host/);
+    await a.request('duel:pick', { mode: 'bug-hunt', category: 'random' });
     await a.request('duel:ready', { ready: true });
     await b.request('duel:ready', { ready: true });
     const round2 = await a.until((r) => r.status === 'playing' && r.round === 2);
     assert.equal(round2.roundInfo.mode, 'bug-hunt');
     assert.notEqual(round2.roundInfo.category, 'random');
+  } finally {
+    await close();
+  }
+});
+
+test('a question’s clock only runs while someone has it open', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b } = await pair(client);
+    await a.request('duel:config', { config: { ...config, count: 3 } });
+    const ra = await startRound(a, b);
+    const [q1, q2] = me(ra).state.questions.map((q) => q.id);
+    const open = (r, id) => qOf(r, id).openSince !== null;
+    assert.equal(open(ra, q1), false, 'nothing runs until a question is opened');
+
+    a.socket.emit('duel:view', { questionId: q1 });
+    await a.until((r) => open(r, q1));
+    await new Promise((res) => setTimeout(res, 120));
+    a.socket.emit('duel:view', { questionId: q2 });
+    const moved = await a.until((r) => open(r, q2) && !open(r, q1));
+    const spent = qOf(moved, q1).spentMs;
+    assert.ok(spent >= 100, 'the first question kept its time');
+    assert.equal(qOf(moved, q2).spentMs, 0);
+
+    // Watching the others pauses it too, and Bob's clocks are his own.
+    a.socket.emit('duel:view', { questionId: q2, away: true });
+    const away = await a.until((r) => !open(r, q2));
+    assert.equal(qOf(away, q1).spentMs, spent);
+    assert.equal(open(away, q2) || qOf(away, q2, named(away, 'Bob')).openSince !== null, false);
+
+    // A dropped connection pauses it; coming back carries on.
+    a.socket.emit('duel:view', { questionId: q2 });
+    await a.until((r) => open(r, q2));
+    a.socket.disconnect();
+    const gone = await b.until((r) => qOf(r, q2, named(r, 'Ada')).openSince === null);
+    assert.ok(qOf(gone, q2, named(gone, 'Ada')).spentMs >= 0);
+    a.socket.connect();
+    await b.until((r) => qOf(r, q2, named(r, 'Ada')).openSince !== null);
+  } finally {
+    await close();
+  }
+});
+
+test('the host can remove a player, for good, at any point', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b, code } = await pair(client);
+    assert.match((await b.request('duel:kick', { playerId: me(a.room).id })).error, /Only the host/);
+    assert.match((await a.request('duel:kick', { playerId: me(a.room).id })).error, /No such player/, 'not yourself');
+    let kicked = false;
+    b.socket.on('duel:kicked', () => { kicked = true; });
+    assert.ok((await a.request('duel:kick', { playerId: named(a.room, 'Bob').id })).ok);
+    await b.until((r) => r === null);
+    assert.ok(kicked);
+    assert.equal((await a.until((r) => r.players.length === 1)).players[0].name, 'Ada');
+    assert.match((await b.request('duel:join', { code, name: 'Bob' })).error, /removed you/);
+
+    // Mid-round: the others stop waiting for them.
+    const c = client();
+    await c.until((r) => r === null);
+    await c.request('duel:join', { code, name: 'Cy' });
+    await a.until((r) => r.players.length === 2);
+    const ra = await startRound(a, c);
+    a.socket.emit('duel:action', { type: 'submitResult', result: solve(firstQ(ra)) });
+    await a.until((r) => me(r).state.status === 'finished');
+    assert.equal(a.room.status, 'playing', 'still waiting for Cy');
+    assert.ok((await a.request('duel:kick', { playerId: named(a.room, 'Cy').id })).ok);
+    await a.until((r) => r.status === 'finished');
+  } finally {
+    await close();
+  }
+});
+
+test('the host can hand the room to another player', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b } = await pair(client);
+    assert.match((await b.request('duel:host', { playerId: named(b.room, 'Bob').id })).error, /Only the host/);
+    assert.ok((await a.request('duel:addBot', { level: 'easy' })).ok);
+    const bot = (await a.until((r) => r.players.some((p) => p.bot))).players.find((p) => p.bot);
+    assert.match((await a.request('duel:host', { playerId: bot.id })).error, /bot/);
+    assert.ok((await a.request('duel:host', { playerId: named(a.room, 'Bob').id })).ok);
+    const seen = await b.until((r) => r.hostId === me(r).id);
+    assert.ok(seen);
+    assert.match((await a.request('duel:config', { config })).error, /Only the host/);
+    assert.ok((await b.request('duel:config', { config })).ok);
+  } finally {
+    await close();
+  }
+});
+
+test('teams are off until the host turns them on, and off again clears them', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b } = await pair(client);
+    assert.equal(a.room.config.teams, false);
+    assert.match((await b.request('duel:team', { team: 'red' })).error, /not turned teams on/);
+    await a.request('duel:config', { config: { ...config, teams: true } });
+    assert.ok((await b.request('duel:team', { team: 'red' })).ok);
+    await a.until((r) => named(r, 'Bob').team === 'red');
+    await a.request('duel:config', { config });
+    const off = await a.until((r) => r.config.teams === false);
+    assert.equal(named(off, 'Bob').team, null);
   } finally {
     await close();
   }
@@ -182,24 +283,12 @@ test('the host can start the round without waiting for everyone to be ready', as
   try {
     const { a, b } = await pair(client);
     assert.match((await b.request('duel:start', {})).error, /Only the host/);
-    // Bob has not voted or readied up; Ada's shown pick becomes her vote and the round starts.
-    assert.ok((await a.request('duel:start', { pick: raceLists })).ok);
+    await a.request('duel:pick', raceLists);
+    assert.ok((await a.request('duel:start')).ok);
     const ra = await a.until((r) => r.status === 'playing');
     assert.equal(ra.roundInfo.mode, 'code-race');
     assert.equal(ra.roundInfo.category, 'lists');
-    assert.match(ra.roundInfo.note, /Ada's vote, the only one cast; Ada \(host\) started it without waiting/);
     assert.equal((await b.until((r) => r.status === 'playing')).round, 1);
-
-    // After the round, Bob (last) picks; if he has not, the host's start makes it random.
-    a.socket.emit('duel:action', { type: 'submitResult', result: solve(firstQ(ra)) });
-    b.socket.emit('duel:action', { type: 'finish' });
-    await a.until((r) => r.status === 'finished');
-    await a.request('duel:next');
-    const lobby = await a.until((r) => r.status === 'lobby');
-    assert.equal(lobby.pick.pickerId, named(lobby, 'Bob').id);
-    assert.ok((await a.request('duel:start', { pick: raceLists })).ok);
-    const r2 = await a.until((r) => r.status === 'playing' && r.round === 2);
-    assert.match(r2.roundInfo.note, /^random/);
   } finally {
     await close();
   }
@@ -236,7 +325,7 @@ async function powerRound(client) {
   await b.request('duel:join', { code, name: 'Bob' });
   await c.request('duel:join', { code, name: 'Cy' });
   await a.until((r) => r?.players.length === 3);
-  for (const x of [a, b, c]) await x.request('duel:pick', raceLists);
+  await a.request('duel:pick', raceLists);
   for (const x of [a, b, c]) await x.request('duel:ready', { ready: true });
   const ra = await a.until((r) => r.status === 'playing');
   await b.until((r) => r.status === 'playing');
@@ -351,12 +440,12 @@ test('a team is wiped through its shared document', async () => {
       const y = client();
       const z = client();
       await x.until((r) => r === null);
-      const { code } = await x.request('duel:create', { name: 'Ada', config: withPowers });
+      const { code } = await x.request('duel:create', { name: 'Ada', config: { ...withPowers, teams: true } });
       await y.request('duel:join', { code, name: 'Bob' });
       await z.request('duel:join', { code, name: 'Cy' });
       await y.request('duel:team', { team: 'red' });
       await z.request('duel:team', { team: 'red' });
-      for (const c of [x, y, z]) await c.request('duel:pick', raceLists);
+      await x.request('duel:pick', raceLists);
       for (const c of [x, y, z]) await c.request('duel:ready', { ready: true });
       const r = await x.until((s) => s.status === 'playing');
       return { a: x, b: y, ra: r, bobId: named(r, 'Bob').id };
@@ -376,26 +465,6 @@ test('a team is wiped through its shared document', async () => {
   }
 });
 
-test('joining or leaving the lobby keeps the others’ votes', async () => {
-  const { client, close } = await setup();
-  try {
-    const { a, b, code } = await pair(client);
-    await a.request('duel:pick', raceLists);
-    await b.request('duel:pick', { mode: 'bug-hunt', category: 'random' });
-    const c = client();
-    await c.until((r) => r === null);
-    assert.ok((await c.request('duel:join', { code, name: 'Cy' })).ok);
-    const seen = await a.until((r) => r.players.length === 3);
-    assert.deepEqual(seen.pick.votes[me(seen).id], raceLists, 'Ada’s vote is still in');
-    assert.equal(seen.pick.votes[named(seen, 'Bob').id], true, 'Bob’s too');
-    await b.request('duel:leave');
-    const after = await a.until((r) => r.players.length === 2);
-    assert.deepEqual(after.pick.votes[me(after).id], raceLists);
-    assert.equal(Object.keys(after.pick.votes).length, 1, 'only Bob’s vote went');
-  } finally {
-    await close();
-  }
-});
 
 test('a page with another version of the questions is told to reload', async () => {
   const { client, close } = await setup();
@@ -428,7 +497,7 @@ test('a submit the server does not count always says why', async () => {
     // Submitting a solved question again.
     a.socket.emit('duel:action', { type: 'submitResult', result: solve(qid), seq: 3 });
     await waitFor(() => a.verify.length === 2);
-    assert.match(a.verify[1].message, /already closed/);
+    assert.match(a.verify[1].message, /already solved/);
   } finally {
     await close();
   }
@@ -469,38 +538,6 @@ test('you can read an opponent’s code on every question you solved, even after
   }
 });
 
-test('time extension: everyone has to agree; one no and it is off', async () => {
-  const { client, close } = await setup();
-  try {
-    const { a, b } = await pair(client);
-    const ra = await startRound(a, b);
-    const endsAt = me(ra).state.endsAt;
-    assert.match((await a.request('duel:extend', { minutes: 7 })).error, /2, 5 or 10/);
-    assert.ok((await a.request('duel:extend', { minutes: 5 })).ok);
-    const asked = await b.until((r) => r.extension);
-    assert.equal(asked.extension.byId, me(ra).id);
-    assert.deepEqual(asked.extension.voters, [me(asked).id]);
-    assert.match((await a.request('duel:extend', { minutes: 2 })).error, /already asked/);
-    assert.match((await a.request('duel:extendVote', { yes: true })).error, /already agreed/);
-    assert.ok((await b.request('duel:extendVote', { yes: true })).ok);
-    const longer = await a.until((r) => !r.extension && me(r).state.endsAt > endsAt);
-    assert.equal(me(longer).state.endsAt - endsAt, 5 * 60 * 1000);
-    assert.equal(me(longer).state.durationSec, 15 * 60 + 5 * 60);
-    assert.equal(named(longer, 'Bob').state.endsAt - endsAt, 5 * 60 * 1000, 'for everyone');
-    assert.equal(longer.extensions, 1);
-
-    // Bob asks, Ada says no: nothing changes, and Bob waits before asking again.
-    assert.ok((await b.request('duel:extend', { minutes: 2 })).ok);
-    await a.until((r) => r.extension);
-    assert.ok((await a.request('duel:extendVote', { yes: false })).ok);
-    const no = await b.until((r) => !r.extension);
-    assert.equal(me(no).state.endsAt - endsAt, 5 * 60 * 1000);
-    assert.match((await b.request('duel:extend', { minutes: 2 })).error, /Wait/);
-    assert.ok(a.chat.some((m) => m.text.includes('Ada said no')));
-  } finally {
-    await close();
-  }
-});
 
 test('the host chooses who gets power-ups', async () => {
   const { client, close } = await setup();
@@ -573,7 +610,7 @@ test('the host cannot start alone', async () => {
     const a = client();
     await a.until((r) => r === null);
     await a.request('duel:create', { name: 'Ada', config });
-    assert.match((await a.request('duel:start', { pick: raceLists })).error, /someone to join/);
+    assert.match((await a.request('duel:start')).error, /someone to join/);
   } finally {
     await close();
   }
@@ -752,7 +789,7 @@ test('leaving mid-round lets the other player finish and win', async () => {
   }
 });
 
-test('a bot joins, picks, plays a whole round and chats', async () => {
+test('a bot joins, plays a whole round and chats', async () => {
   const { client, close, duel } = await setup({ botSpeed: 400 });
   try {
     const a = client();
@@ -762,7 +799,7 @@ test('a bot joins, picks, plays a whole round and chats', async () => {
     const withBot = await a.until((r) => r.players.some((p) => p.bot === 'hard'));
     const bot = withBot.players.find((p) => p.bot);
 
-    // Ada votes and readies; the bot does the same on its own.
+    // Ada chooses and readies; the bot gets ready on its own.
     await a.request('duel:pick', { mode: 'random', category: 'random' });
     await a.request('duel:ready', { ready: true });
     await a.until((r) => r.status === 'playing', 10000);
@@ -777,10 +814,9 @@ test('a bot joins, picks, plays a whole round and chats', async () => {
     assert.equal(done.lastWinnerId, bot.id);
     assert.ok(a.chat.some((m) => m.fromId === bot.id), 'the bot said something');
 
-    // Ada lost, so Ada picks round 2; the bot gets ready by itself.
+    // Back in the lobby the bot gets ready by itself.
     await a.request('duel:next');
-    const lobby = await a.until((r) => r.status === 'lobby');
-    assert.equal(lobby.pick.pickerId, me(lobby).id);
+    await a.until((r) => r.status === 'lobby');
     await a.until((r) => r.players.find((p) => p.id === bot.id).ready, 10000);
 
     // When the human leaves, the bot goes too and the room is gone.
@@ -814,19 +850,6 @@ test('made-up test counts are rejected, real ones accepted', async () => {
   }
 });
 
-test('in a vote, players only see that the other voted, not what', async () => {
-  const { client, close } = await setup();
-  try {
-    const { a, b } = await pair(client);
-    await a.request('duel:pick', { mode: 'bug-hunt', category: 'dp' });
-    const seenByB = await b.until((r) => Object.keys(r.pick.votes).length === 1);
-    assert.equal(Object.values(seenByB.pick.votes)[0], true);
-    const seenByA = await a.until((r) => Object.keys(r.pick.votes).length === 1);
-    assert.deepEqual(seenByA.pick.votes[me(seenByA).id], { mode: 'bug-hunt', category: 'dp' });
-  } finally {
-    await close();
-  }
-});
 
 test('a player who stays disconnected mid-round leaves, so the other is not stuck', async () => {
   const { client, close } = await setup({ disconnectGraceMs: 300 });
@@ -973,11 +996,11 @@ async function trio(client, cfg = config) {
 test('teammates share one score, one live editor and a team chat', async () => {
   const { client, close } = await setup();
   try {
-    const { a, b, c } = await trio(client);
+    const { a, b, c } = await trio(client, { ...config, teams: true });
     assert.ok((await a.request('duel:team', { team: 'red' })).ok);
     assert.ok((await b.request('duel:team', { team: 'red' })).ok);
     assert.match((await b.request('duel:team', { team: 'red', playerId: named(b.room, 'Cy').id })).error, /own team/);
-    for (const x of [a, b, c]) await x.request('duel:pick', raceLists);
+    await a.request('duel:pick', raceLists);
     for (const x of [a, b, c]) await x.request('duel:ready', { ready: true });
     const room = await c.until((r) => r.status === 'playing');
     assert.equal(room.sides.length, 2, 'Red team and Cy');
@@ -1022,15 +1045,11 @@ test('teammates share one score, one live editor and a team chat', async () => {
     b.socket.emit('duel:action', { type: 'submitResult', result: solve(qid), seq: 1 });
     const solvedForAda = await a.until((r) => qOf(r, qid)?.status === 'solved');
     assert.equal(me(solvedForAda).state.total, named(solvedForAda, 'Bob').state.total);
-    // Cy loses, so Cy picks next.
     c.socket.emit('duel:action', { type: 'finish' });
     const done = await a.until((r) => r.status === 'finished');
     assert.equal(done.lastWinnerSide, 'team:red');
     assert.equal(done.wins[named(done, 'Ada').id], 1);
     assert.equal(done.wins[named(done, 'Bob').id], 1);
-    await a.request('duel:next');
-    const lobby = await a.until((r) => r.status === 'lobby');
-    assert.equal(lobby.pick.pickerId, named(lobby, 'Cy').id);
   } finally {
     await close();
   }
@@ -1040,10 +1059,10 @@ test('the host\'s round options reach everyone; reveals only when allowed and on
   const { client, close } = await setup();
   try {
     const { a, b } = await pair(client);
-    assert.ok((await b.request('duel:config', { config: { ...config, minutes: 5 } })).error, 'only the host');
-    assert.ok((await a.request('duel:config', { config: { ...config, minutes: 20, partial: true, revealCost: 0.25 } })).ok);
-    const seen = await b.until((r) => r.config.minutes === 20);
-    assert.deepEqual(seen.config, { ...config, minutes: 20, partial: true, revealCost: 0.25, powerups: { blackout: 0, wipe: 0, keyboard: 0, hints: 0 } });
+    assert.ok((await b.request('duel:config', { config: { ...config, partial: true } })).error, 'only the host');
+    assert.ok((await a.request('duel:config', { config: { ...config, partial: true, revealCost: 0.25 } })).ok);
+    const seen = await b.until((r) => r.config.partial);
+    assert.deepEqual(seen.config, { ...config, teams: false, partial: true, revealCost: 0.25, powerups: { blackout: 0, wipe: 0, keyboard: 0, hints: 0 } });
 
     const room = await startRound(a, b);
     const qid = firstQ(room);

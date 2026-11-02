@@ -1,40 +1,51 @@
 // Admin screen, in two tabs. Live: everyone playing right now, solo players and duel
-// rooms on the left and the code of whoever is picked on the right. Solutions: the
+// rooms on the left and the question and code of whoever is picked on the right. Solutions: the
 // code that solved each question (the newest few per question, server/solutions.js).
+// Accounts: who has an account, when they were last online and their recent games.
 import { h, setChildren, formatTime, toast } from './dom.js';
 import { icon, brandMark } from './icons.js';
 import { viewButton } from './view-settings.js';
-import { LANG_LABELS, MODE_LABELS, DIFFICULTY_LABELS, CATEGORIES } from '../questions/index.js';
+import { LANG_LABELS, MODE_LABELS, DIFFICULTY_LABELS, CATEGORIES, getQuestion } from '../questions/index.js';
+import { problemView } from './play-parts.js';
 
 const TEAM = { red: 'Red', green: 'Green', blue: 'Blue' };
 const SOLO_STATUS = { playing: 'working', solved: 'solved', timeout: 'out of time', skipped: 'skipped' };
 const label = (labels, key) => labels[key] ?? key;
 
 /**
- * renderAdmin(root, { onBack, onLogout, onWatch(watch | null), loadSolutions(), loadSolution(questionId) })
+ * renderAdmin(root, { onBack, onLogout, onWatch(watch | null), loadSolutions(), loadSolution(questionId), loadAccounts(), loadAccount(id) })
  * The loaders return a promise of the server's reply. -> { update(view), resubscribe(), cleanup() }
  */
-export function renderAdmin(root, { onBack, onLogout, onWatch, loadSolutions, loadSolution }) {
+export function renderAdmin(root, { onBack, onLogout, onWatch, loadSolutions, loadSolution, loadAccounts, loadAccount }) {
   let view = null;
   let delta = 0; // our clock minus the server's
   let watch = null; // { kind, id, room? }
-  let tab = 'live'; // 'live' | 'solutions'
+  let tab = 'live'; // 'live' | 'solutions' | 'accounts'
   const sol = { questions: null, stats: null, open: null, entries: null }; // the Solutions tab
+  const acc = { list: null, open: null, games: null }; // the Accounts tab
 
   const counts = h('span.admin-counts', {});
   const list = h('div.admin-list', {}, h('p.muted', {}, 'Loading…'));
   const codeHead = h('div.admin-code-head', {});
+  const problem = h('div.admin-problem', { hidden: true });
+  let problemKey = null; // the question shown in `problem`, so an update keeps its scroll
   const code = h('pre.admin-code', {});
   const tabs = h('div.admin-tabs', { role: 'tablist' });
   const live = h('div.admin-cols', {},
     h('section.admin-players', { 'aria-label': 'Players' }, list),
-    h('section.admin-code-pane', { 'aria-label': 'Code' }, codeHead, code));
+    h('section.admin-code-pane', { 'aria-label': 'Code' }, codeHead, problem, code));
   const solQuestions = h('div.admin-list', {});
   const solHead = h('div.admin-code-head', {});
   const solBody = h('div.sol-list', {});
   const solutions = h('div.admin-cols', { hidden: true },
     h('section.admin-players', { 'aria-label': 'Questions' }, solQuestions),
     h('section.admin-code-pane', { 'aria-label': 'Solutions' }, solHead, solBody));
+  const accList = h('div.admin-list', {});
+  const accHead = h('div.admin-code-head', {});
+  const accBody = h('div.sol-list', {});
+  const accountsPane = h('div.admin-cols', { hidden: true },
+    h('section.admin-players', { 'aria-label': 'Accounts' }, accList),
+    h('section.admin-code-pane', { 'aria-label': 'Recent games' }, accHead, accBody));
   setChildren(root, h('div.admin', {},
     h('header.admin-header', {},
       h('button.btn.btn-ghost.btn-small', { type: 'button', onclick: onBack }, icon('back'), 'Home'),
@@ -44,16 +55,18 @@ export function renderAdmin(root, { onBack, onLogout, onWatch, loadSolutions, lo
       viewButton(),
       h('button.btn.btn-small#btn-logout', { type: 'button', onclick: onLogout }, 'Log out')),
     live,
-    solutions));
+    solutions,
+    accountsPane));
 
   function drawTabs() {
     const opt = (key, text) => h(`button.admin-tab${tab === key ? '.active' : ''}`, {
       type: 'button', role: 'tab', 'aria-selected': String(tab === key),
       onclick: () => { if (tab !== key) setTab(key); },
     }, text);
-    setChildren(tabs, opt('live', 'Live'), opt('solutions', 'Solutions'));
+    setChildren(tabs, opt('live', 'Live'), opt('solutions', 'Solutions'), opt('accounts', 'Accounts'));
     live.hidden = tab !== 'live';
     solutions.hidden = tab !== 'solutions';
+    accountsPane.hidden = tab !== 'accounts';
     counts.hidden = tab !== 'live';
   }
 
@@ -61,6 +74,70 @@ export function renderAdmin(root, { onBack, onLogout, onWatch, loadSolutions, lo
     tab = next;
     drawTabs();
     if (tab === 'solutions') refreshSolutions();
+    if (tab === 'accounts') refreshAccounts();
+  }
+
+  // ---------------------------------------------------------------- accounts
+
+  async function refreshAccounts() {
+    const res = await loadAccounts();
+    if (res?.error) {
+      toast(res.error, 3500, 'bad');
+      return;
+    }
+    acc.list = res.accounts;
+    if (acc.open !== null) await openAccount(acc.open, false);
+    drawAccounts();
+  }
+
+  async function openAccount(id, draw = true) {
+    if (acc.open !== id) acc.games = null;
+    acc.open = id;
+    if (draw) drawAccounts();
+    const res = await loadAccount(id);
+    if (res?.error) {
+      toast(res.error, 3500, 'bad');
+      return;
+    }
+    if (acc.open !== id) return;
+    acc.games = res.games;
+    if (draw) drawAccounts();
+  }
+
+  function gameRow(g) {
+    const what = [g.kind === 'duel' ? 'Duel' : g.kind === 'practice' ? 'Practice' : 'Solo', label(MODE_LABELS, g.mode),
+      g.category ? CATEGORIES[g.category]?.label ?? g.category : null, label(DIFFICULTY_LABELS, g.difficulty), label(LANG_LABELS, g.lang)];
+    return h('article.account-game', {},
+      h('div', {},
+        h('strong', {}, what.filter(Boolean).join(' · ')),
+        h('p.muted.small', {}, [`${g.solved}/${g.questions} solved`, g.opponents ? `vs ${g.opponents}` : null].filter(Boolean).join(' · '))),
+      h(`span.game-result${g.result ? `.game-${g.result}` : ''}`, {}, g.result ?? ''),
+      h('span.admin-num.admin-score', { title: 'Points' }, String(g.points)),
+      h('span.muted.small.sol-when', { title: new Date(g.playedAt).toLocaleString() }, ago(g.playedAt)));
+  }
+
+  function drawAccounts() {
+    const list = acc.list;
+    setChildren(accList,
+      h('h2.col-title', {}, 'Accounts', h('span.muted', {}, list ? ` ${list.length}` : '')),
+      !list ? h('p.muted', {}, 'Loading…')
+        : list.length ? list.map((a) => h(`button.admin-row.sol-q${acc.open === a.id ? '.active' : ''}`, {
+          type: 'button',
+          onclick: () => openAccount(a.id),
+        },
+          h('span.admin-who', {}, dot(a.online), h('strong', {}, a.username)),
+          h('span.admin-doing.muted', { title: new Date(a.lastSeenAt).toLocaleString() }, a.online ? 'online now' : `last online ${ago(a.lastSeenAt)}`),
+          h('span.admin-num.admin-score', { title: 'Games played' }, String(a.gamesPlayed))))
+          : h('p.muted', {}, 'No accounts yet.'));
+    const open = list?.find((a) => a.id === acc.open);
+    if (!open) {
+      setChildren(accHead, h('h2.col-title', {}, 'Recent games'));
+      setChildren(accBody, h('p.muted.sol-empty', {}, 'Pick an account to see their recent games.'));
+      return;
+    }
+    setChildren(accHead, h('h2.col-title', {}, open.username), h('span.muted', {}, `${open.gamesPlayed} game${open.gamesPlayed === 1 ? '' : 's'} · joined ${ago(open.createdAt)}`));
+    setChildren(accBody, !acc.games ? h('p.muted.sol-empty', {}, 'Loading…')
+      : acc.games.length ? acc.games.map(gameRow) : h('p.muted.sol-empty', {}, 'No games yet.'));
   }
 
   // ---------------------------------------------------------------- solutions
@@ -174,8 +251,8 @@ export function renderAdmin(root, { onBack, onLogout, onWatch, loadSolutions, lo
       h('span.admin-who', {}, dot(p.connected && !p.left), p.bot ? icon('bot', 'Bot') : null, h('strong', {}, p.name),
         tags.length ? h('span.muted', {}, tags.join(' · ')) : null),
       h('span.admin-doing', {}, doing),
-      h('span.admin-num', { title: 'Time left in the round' },
-        room.status === 'playing' && p.status === 'playing' ? h('span.admin-clock', { dataset: { ends: p.endsAt ?? '' } }, timeLeft(p.endsAt)) : '—'),
+      h('span.admin-num', { title: 'Time on the question' },
+        room.status === 'playing' && p.status === 'playing' && p.onQuestionSec !== null ? formatTime(p.onQuestionSec) : '—'),
       h('span.admin-num.admin-score', { title: 'Score' }, room.status === 'lobby' ? '—' : String(p.total)));
   }
 
@@ -189,8 +266,24 @@ export function renderAdmin(root, { onBack, onLogout, onWatch, loadSolutions, lo
       room.players.map((p) => duelPlayerRow(room, p)));
   }
 
+  /** The question the watched player has open, in the language they are playing it in. */
+  function drawProblem(w) {
+    const q = w?.questionId ? getQuestion(w.questionId) : null;
+    const played = watch?.kind === 'solo'
+      ? view?.solos.find((s) => s.id === watch.id)?.lang
+      : view?.rooms.find((r) => r.code === watch?.room)?.config.lang;
+    const lang = q?.languages.includes(played) ? played : q?.languages[0];
+    const key = q ? `${q.id}|${lang}` : null;
+    if (key === problemKey) return;
+    problemKey = key;
+    problem.hidden = !q;
+    setChildren(problem, q ? problemView(q, lang) : null);
+    problem.scrollTop = 0;
+  }
+
   function drawCode() {
     const w = view?.watched;
+    drawProblem(watch ? w : null);
     if (!watch) {
       setChildren(codeHead, h('h2.col-title', {}, 'Code'));
       setChildren(code, h('span.muted', {}, 'Pick a player to watch their code live.'));
@@ -227,7 +320,10 @@ export function renderAdmin(root, { onBack, onLogout, onWatch, loadSolutions, lo
 
   drawTabs();
   // The Solutions tab refreshes itself while it is open.
-  const solTimer = setInterval(() => { if (tab === 'solutions') refreshSolutions(); }, 10_000);
+  const solTimer = setInterval(() => {
+    if (tab === 'solutions') refreshSolutions();
+    if (tab === 'accounts') refreshAccounts();
+  }, 10_000);
 
   return {
     update(next) {

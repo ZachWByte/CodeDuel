@@ -32,10 +32,11 @@ function infoButton(label, content) {
 
 /**
  * renderHome(root, { onStart(config), onPractice(config, questionId),
- *   onCreateDuel(config, name), onBotDuel(config, name), onJoinDuel(code, name), admin?, roomCode? })
+ *   onCreateDuel(config, name), onBotDuel(config, name), onJoinDuel(code, name), admin?, account?, roomCode? })
  * The duel callbacks resolve with { error } when they fail. admin: { loggedIn(), login(), show(), logout() }.
+ * account: { username(), open(), logout() }.
  */
-export function renderHome(root, { onStart, onPractice, onCreateDuel, onBotDuel, onJoinDuel, admin = null, roomCode = '' }) {
+export function renderHome(root, { onStart, onPractice, onCreateDuel, onBotDuel, onJoinDuel, admin = null, account = null, roomCode = '' }) {
   let settings = loadSettings();
   const browser = { open: false, text: '', mode: 'all', difficulty: 'all' };
   const duel = { name: loadName(), code: roomCode, error: '', busy: false };
@@ -97,22 +98,21 @@ export function renderHome(root, { onStart, onPractice, onCreateDuel, onBotDuel,
           'aria-expanded': String(browser.open),
           onclick: () => { browser.open = !browser.open; draw(); },
         }, icon('chevron'), 'Question browser', h('span.muted', {}, LANG_LABELS[settings.lang])),
-        browser.open ? drawBrowser() : null),
-
-      h('footer.home-footer', {},
-        'Shortcuts: ', h('kbd', {}, 'Ctrl/⌘ + Enter'), ' run · ',
-        h('kbd', {}, 'Ctrl/⌘ + Shift + Enter'), ' submit')));
+        browser.open ? drawBrowser() : null)));
   }
 
-  /** Log in (top right); once logged in as admin, the admin view and Log out. */
+  /** Log in or the player's name (top right), and the admin view once logged in as admin. */
   function drawAccount() {
-    if (!admin) return null;
-    if (!admin.loggedIn()) {
-      return h('button.btn.btn-ghost.btn-small#btn-login', { type: 'button', onclick: () => admin.login() }, icon('user'), 'Log in');
-    }
+    const username = account?.username();
     return h('span.account', {},
-      h('button.btn.btn-small#btn-admin', { type: 'button', onclick: () => admin.show() }, icon('eye'), 'Admin'),
-      h('button.btn.btn-ghost.btn-small', { type: 'button', onclick: () => admin.logout() }, 'Log out'));
+      admin?.loggedIn() ? [
+        h('button.btn.btn-small#btn-admin', { type: 'button', onclick: () => admin.show() }, icon('eye'), 'Admin'),
+        h('button.btn.btn-ghost.btn-small#btn-admin-logout', { type: 'button', onclick: () => admin.logout() }, 'Leave admin'),
+      ] : null,
+      username ? [
+        h('span.account-name', {}, icon('user'), username),
+        h('button.btn.btn-ghost.btn-small#btn-logout', { type: 'button', onclick: () => account.logout() }, 'Log out'),
+      ] : account ? h('button.btn.btn-ghost.btn-small#btn-login', { type: 'button', onclick: () => account.open() }, icon('user'), 'Log in') : null);
   }
 
   function drawDuel() {
@@ -155,7 +155,6 @@ export function renderHome(root, { onStart, onPractice, onCreateDuel, onBotDuel,
 
     return h('section.card.duel-card', { 'aria-label': 'Play a friend' },
       h('h2.card-title', {}, icon('duel'), 'Play a friend'),
-      h('p.duel-intro', {}, 'Same questions, same clock. Send a friend the room code.'),
       h('div.duel-fields', {},
         h('label', { for: 'duel-name' }, 'Your name'),
         h('input#duel-name', {

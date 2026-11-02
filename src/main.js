@@ -13,6 +13,7 @@ import { applyPrefs } from './state/prefs.js';
 import { installViewSettings } from './ui/view-settings.js';
 import { send } from './net/duel-client.js';
 import { createAdmin } from './admin.js';
+import { createAccount } from './account.js';
 
 applyPrefs();
 installViewSettings();
@@ -109,12 +110,21 @@ function showHome() {
     onBotDuel: (config, name) => duel.createWithBot(config, name),
     onJoinDuel: (code, name) => duel.join(code, name),
     admin,
+    account,
     roomCode,
   }));
 }
 
 const duel = createDuel({ root, mount, showHome });
 const admin = createAdmin({ root, mount, showHome });
+// New progress from the server shows on the home screen, unless someone is typing there.
+const account = createAccount({
+  admin,
+  onChanged: () => {
+    const typing = ['INPUT', 'SELECT'].includes(document.activeElement?.tagName);
+    if (root.querySelector('.home') && !typing) showHome();
+  },
+});
 
 // Resume a duel or a session that was in progress when the page was reloaded.
 const saved = loadActiveSession();
@@ -126,5 +136,6 @@ else {
   clearActiveSession();
   showHome();
 }
+account.resume();
 // Python § is needed by most sessions; start loading py-slang straight away.
 warmUp('py3');
