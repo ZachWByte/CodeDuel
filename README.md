@@ -70,7 +70,8 @@ speed bonus of up to the base again (so up to double), falling as the clock runs
 never drops below 20% of the base; unsolved questions score 0. The end of each question
 shows the breakdown (`scoreBreakdown` in `state/engine.js`).
 
-**Duels** have no speed bonus and no round clock. A question starts at its base and loses
+**Duels** have no speed bonus. The host's round clock (below) decides when the round ends,
+and does not affect a question's points. A question starts at its base and loses
 points only for the time someone on your side has it open, up to half the base by its
 usual time limit (5 / 10 / 15 minutes in Code Race, 3 / 6 / 10 in Bug Hunt), and nothing
 after that. Moving to another question, watching the others or dropping out stops its
@@ -149,10 +150,13 @@ per round come from the settings above) and shows a 4-letter code and a link
 - **Lobby:** up to 6 players, who is ready, the match score and a chat. The host sets
   the mode (**Code Race** by default, Bug Hunt or random) and topic of every round, the
   language, difficulty (one for the round, or **set per question**: e.g. easy, easy,
-  medium, hard, any), number of questions, teams, power-ups and two round options, and can
+  medium, hard, any), number of questions, round time, teams, power-ups and two round options, and can
   add bots (easy, medium or hard). Everyone sees the same settings; only the host can
   change them. The host can also **remove a player** (they cannot rejoin that room) and
   **hand the room to someone else**.
+  - **Round time** (5–60 minutes, 15 by default, or no limit): one clock for the whole
+    round. When it runs out the round ends for everyone, and unsolved questions score
+    only what they have already earned.
   - **Secret tests:** only a solve scores, or each secret test passed earns points
     (up to half the question) without a solve. The best submit counts.
   - **Reveal a failed test:** off, or allowed for 10%, 25% or 50% of the question's
@@ -184,7 +188,8 @@ per round come from the settings above) and shows a 4-letter code and a link
   the same questions, open at once, and moves between them freely with the tabs along the
   bottom. Under each question's title, "Worth up to N now" shows the most it can still score
   and what time, wrong submits, reveals and extra lines have cost. A side's round ends when
-  it has solved everything or presses Finish; the round ends when every side's has. If
+  it has solved everything or presses Finish; the round ends when every side's has, or
+  when the round clock runs out. If
   someone is holding it up, the host can remove them from the results screen.
 - **Leaderboard:** the side panel ranks every side live (rows slide when the order
   changes), with what each is working on; the header shows your place and the gap.

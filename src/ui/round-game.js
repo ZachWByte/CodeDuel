@@ -1,5 +1,6 @@
-// Duel round screen: every question of the round is open at once, and each has its
-// own clock, which only runs while it is on screen. Tabs along the bottom switch question, and each question keeps its own code (a
+// Duel round screen: every question of the round is open at once, under the round
+// clock (if the host set one), and each has its own clock, which only runs while it
+// is on screen. Tabs along the bottom switch question, and each question keeps its own code (a
 // team shares one live document per question, with teammates' cursors). Solving a
 // question offers the next one, or watching an opponent instead.
 import { h, setChildren, formatTime, confirmDialog } from './dom.js';
@@ -10,7 +11,7 @@ import { getQuestion, LANG_LABELS, MODE_LABELS, difficultyText } from '../questi
 import { startingCode, linesChanged, resolveTests, LANG_FAMILY } from '../judge/resolve.js';
 import { runVisibleTests, submitSolution } from '../judge/judge.js';
 import { run } from '../runners/runner.js';
-import { spentSec, worthNow, solvedCount, TIME_PENALTY_SHARE } from '../state/round.js';
+import { roundTimeLeftSec, spentSec, worthNow, solvedCount, TIME_PENALTY_SHARE } from '../state/round.js';
 import { BASE_POINTS, PENALTIES } from '../state/engine.js';
 import { loadDraft, saveDraft, clearDraft } from '../state/storage.js';
 import { icon, brandMark, clockCase } from './icons.js';
@@ -55,6 +56,7 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
   // ---------------------------------------------------------------- skeleton
   const el = {
     solved: h('span.numeral', {}),
+    roundTimer: h('span.numeral.hdr-timer', {}),
     timer: h('span.numeral.hdr-timer', {}),
     score: h('span.numeral.hdr-score', {}),
     tabs: h('nav.scoresheet.qtabs', { 'aria-label': 'Questions' }),
@@ -93,11 +95,13 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
     el.results.hidden = name !== 'results';
   }
 
+  const timedRound = store.getState().endsAt !== null;
   el.clock = clockCase([
     ['solved', el.solved, { className: '.face-q' }],
-    ['this question', el.timer, { lit: true }],
+    timedRound ? ['round', el.roundTimer, { lit: true, flag: true }] : null,
+    ['this question', el.timer, { lit: !timedRound }],
     ['score', el.score],
-  ]);
+  ].filter(Boolean));
   el.toolbar = h('div.toolbar', {},
     h('div.tool-group', {}, btn.run, btn.tests, btn.submit),
     el.meter, h('span.spacer', {}), el.status,
@@ -509,6 +513,12 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
     el.solved.textContent = `${solvedCount(state)}/${state.qs.length}`;
     const c = stateQ();
     el.timer.textContent = c ? formatTime(spentSec(c, state.endedAt ?? Date.now())) : formatTime(0);
+    if (timedRound) {
+      const left = roundTimeLeftSec(state, Date.now());
+      el.roundTimer.textContent = formatTime(left);
+      el.clock.classList.toggle('clock-low', state.status === 'playing' && left <= 60);
+      el.clock.classList.toggle('clock-fallen', state.status === 'finished' && state.endReason === 'time');
+    }
     el.score.textContent = String(state.total);
     updateWorth();
   }
@@ -706,7 +716,10 @@ export function renderRound(root, { store, resumed, headerExtra = null, watch = 
     updateMeter();
   });
 
-  const timer = setInterval(updateHeader, 250);
+  const timer = setInterval(() => {
+    store.dispatch({ type: 'tick', now: Date.now() });
+    updateHeader();
+  }, 250);
   const draftTimer = setInterval(saveDraftNow, DRAFT_EVERY_MS);
 
   // Line counts for the others, every few seconds, when they change.

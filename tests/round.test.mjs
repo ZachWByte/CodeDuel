@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRound, reduceRound, spentSec, worthNow, questionBreakdown, rankSides } from '../src/state/round.js';
+import { createRound, reduceRound, roundTimeLeftSec, spentSec, worthNow, questionBreakdown, rankSides } from '../src/state/round.js';
 
 const qs = [
   { id: 'CR-E01', mode: 'code-race', difficulty: 'easy' },
   { id: 'CR-M01', mode: 'code-race', difficulty: 'medium' },
 ];
-const config = { lang: 'python', mode: 'code-race', difficulty: 'mixed', count: 2 };
+const config = { lang: 'python', mode: 'code-race', difficulty: 'mixed', count: 2, minutes: 0 };
+const timed = { ...config, minutes: 10 };
 const pass = (id) => ({ questionId: id, passedVisible: 2, passedHidden: 4, total: 6, totalHidden: 4 });
 const partly = (id, hidden) => ({ questionId: id, passedVisible: 2, passedHidden: hidden, total: 6, totalHidden: 4 });
 const act = (s, type, result, now) => reduceRound(s, { type, result, now });
@@ -14,7 +15,7 @@ const open = (s, by, questionId, now) => reduceRound(s, { type: 'view', by, ques
 
 test('questions are solved in any order; every question solved ends the round', () => {
   let s = createRound({ config, questions: qs, now: 0 });
-  assert.equal(s.endsAt, undefined, 'no clock for the round');
+  assert.equal(s.endsAt, null, 'no limit: no clock for the round');
   // The second question first, after 5 of its usual 10 minutes on it: 200 - 50.
   s = open(s, 'ada', 'CR-M01', 0);
   s = act(s, 'submitResult', pass('CR-M01'), 300_000);
@@ -32,6 +33,48 @@ test('questions are solved in any order; every question solved ends the round', 
   assert.equal(s.endReason, 'solved');
   assert.equal(s.total, 240);
   assert.equal(act(s, 'finish', undefined, 330_000), s, 'nothing changes after the end');
+});
+
+test('the round clock ends the round; unsolved questions score nothing', () => {
+  let s = createRound({ config: timed, questions: qs, now: 1000 });
+  assert.equal(s.durationSec, 600);
+  assert.equal(s.endsAt, 601_000);
+  assert.equal(roundTimeLeftSec(s, 0), 600, 'never more than the round, even during the countdown');
+  assert.equal(roundTimeLeftSec(s, 301_000), 300);
+  s = open(s, 'ada', 'CR-E01', 1000);
+  s = act(s, 'submitResult', pass('CR-E01'), 2000);
+  s = open(s, 'ada', 'CR-M01', 2000);
+  const same = s;
+  s = act(s, 'tick', undefined, 600_999);
+  assert.equal(s, same, 'not yet');
+  s = act(s, 'tick', undefined, 700_000);
+  assert.equal(s.status, 'finished');
+  assert.equal(s.endReason, 'time');
+  assert.equal(s.endedAt, 601_000, 'it ends when the clock ran out, not when someone noticed');
+  assert.equal(roundTimeLeftSec(s, 700_000), 0);
+  assert.equal(s.qs[1].points, 0);
+  assert.equal(s.total, s.qs[0].points);
+  assert.equal(spentSec(s.qs[1], 700_000), 599, 'the question’s clock stopped with the round');
+});
+
+test('an action after the time is up is too late', () => {
+  for (const [type, result] of [['submitResult', pass('CR-E01')], ['testRun', { questionId: 'CR-E01', passed: 1, total: 2 }], ['finish', undefined]]) {
+    const s = act(createRound({ config: timed, questions: qs, now: 0 }), type, result, 600_000);
+    assert.equal(s.endReason, 'time', type);
+    assert.equal(s.total, 0, type);
+    assert.equal(s.qs[0].attempts + s.qs[0].testRuns, 0, type);
+  }
+});
+
+test('no limit: the clock never ends the round', () => {
+  const s = createRound({ config, questions: qs, now: 0 });
+  assert.equal(roundTimeLeftSec(s, 1000), null);
+  assert.equal(act(s, 'tick', undefined, 1e12), s);
+});
+
+test('a round with no minutes given gets the default clock', () => {
+  const { minutes, ...plain } = config;
+  assert.equal(createRound({ config: plain, questions: qs, now: 0 }).durationSec, 900);
 });
 
 test('only the open question loses points, and gently', () => {

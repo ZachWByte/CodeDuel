@@ -2,7 +2,7 @@
 // same messages), so it also exercises the real protocol. It does not run code:
 // it works through the round's questions in order and, for each, plans how long
 // it "takes", how many test runs and wrong submits it makes, and whether it solves
-// it at all, from its level.
+// it at all, from its level, until the round clock (if any) would run out.
 //
 // Used by the server ("Add bot" in the lobby) and by scripts/bot.mjs, which can
 // join a room on any server, e.g. one deployed on Render.
@@ -177,23 +177,26 @@ export function startBot({ url, code, level = 'medium', token, name, speed = 1, 
 
   /**
    * Plans the whole round: the questions in order, each taking a share of its usual
-   * time limit, with test runs, wrong submits and (maybe) a solve.
+   * time limit, with test runs, wrong submits and (maybe) a solve, until the round
+   * clock (if any) would run out.
    */
   function planRound(s) {
     const startIn = s.startedAt + delta - Date.now(); // the countdown, if any
     // later() divides by speed; the countdown is real time, so undo that for it.
     const at = (ms) => startIn * speed + ms;
+    const roundMs = s.durationSec === null ? Infinity : s.durationSec * 1000;
     let t = 0;
     for (const meta of s.questions) {
       const q = getQuestion(meta.id);
       const limitMs = timeLimitFor(q) * 1000;
       const solves = Math.random() < cfg.solve[q.difficulty];
       const spend = solves ? between(cfg.pace) * limitMs : 0.6 * limitMs;
+      if (t + spend > roundMs * 0.97) break;
       planQuestion(s, q, (share) => at(t + share * spend), solves);
       t += spend + 1500 + Math.random() * 2500;
     }
     // Nothing left it can do: stop, so nobody waits on its account.
-    later(at(t), () => act('finish'));
+    later(at(Math.min(t, roundMs * 0.98)), () => act('finish'));
   }
 
   /** One question's moves; when(share) is the time a share of the way through it. */

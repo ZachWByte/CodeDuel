@@ -6,9 +6,10 @@
 // A room plays a match of rounds. The host chooses each round's mode and topic. When
 // everyone is ready (or the host says so) the round starts after a short countdown.
 //
-// A round has no clock of its own: every question is open at once, and each one's
-// clock only runs while someone on the side has it open (src/state/round.js). The
-// round ends when every side has solved everything or finished. Players play for a
+// The host sets the round clock (or no limit). Every question is open at once, and
+// each one's own clock only runs while someone on the side has it open
+// (src/state/round.js). The round ends when the clock runs out, or when every side
+// has solved everything or finished. Players play for a
 // side: on their own or, if the host turns teams on, in a team (red, green or blue)
 // that shares one score, one state and one live editor per question
 // (server/collab.js). The host also chooses whether secret tests passed earn points
@@ -19,7 +20,7 @@
 // Client -> server (with an ack callback, except duel:action, duel:chat, duel:view,
 // duel:code, duel:progress and team:cursor):
 //   duel:create { name, config }  duel:join { code, name }  duel:leave
-//   duel:config { config }        (host, lobby: language, difficulty, questions, teams, options)
+//   duel:config { config }        (host, lobby: language, difficulty, questions, minutes, teams, options)
 //   duel:pick { mode, category }  (host, lobby; 'random' allowed for both)
 //   duel:start                    (host, lobby: start now, without waiting for everyone to be ready)
 //   duel:team { team, playerId? } (lobby, teams on: your team, or a bot's if you are the host; null = on your own)
@@ -88,7 +89,7 @@
 // was sent, so the check never costs time.
 import { Server } from 'socket.io';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { createRound, reduceRound, questionIndex, rankSides, spentSec, REVEAL_COSTS, DEFAULT_ROUND, POWERUP_USES } from '../src/state/round.js';
+import { createRound, reduceRound, questionIndex, rankSides, spentSec, ROUND_MINUTES, REVEAL_COSTS, DEFAULT_ROUND, POWERUP_USES } from '../src/state/round.js';
 import { LANG_LABELS, MODE_LABELS, DIFFICULTY_LABELS, CATEGORIES, filterQuestions, getQuestion, BANK_VERSION } from '../src/questions/index.js';
 import { resolveTests, findBanned, linesChanged, startingCode } from '../src/judge/resolve.js';
 import { createVerifier, VERIFY_LANGS } from './verify.js';
@@ -190,15 +191,16 @@ export function validConfig(c) {
   const custom = c?.difficulty === 'custom';
   if (!c || !has(LANG_LABELS, c.lang) || !(custom || has(DIFFICULTY_LABELS, c.difficulty)) || !COUNTS.includes(c.count)) return null;
   if (custom && !(Array.isArray(c.levels) && c.levels.length === c.count && c.levels.every((l) => SLOT_LEVELS.includes(l)))) return null;
+  const minutes = c.minutes === undefined ? DEFAULT_ROUND.minutes : c.minutes;
   const revealCost = c.revealCost === undefined ? DEFAULT_ROUND.revealCost : c.revealCost;
-  if (!REVEAL_COSTS.includes(revealCost)) return null;
+  if (!ROUND_MINUTES.includes(minutes) || !REVEAL_COSTS.includes(revealCost)) return null;
   const powerups = {};
   for (const [key, allowed] of Object.entries(POWERUP_USES)) {
     const n = c.powerups?.[key] ?? 0;
     if (!allowed.includes(n)) return null;
     powerups[key] = n;
   }
-  const out = { lang: c.lang, difficulty: c.difficulty, count: c.count, teams: c.teams === true, partial: c.partial === true, revealCost, powerups };
+  const out = { lang: c.lang, difficulty: c.difficulty, count: c.count, minutes, teams: c.teams === true, partial: c.partial === true, revealCost, powerups };
   if (custom) out.levels = [...c.levels];
   return out;
 }
@@ -627,7 +629,7 @@ export function attachDuel(httpServer, {
       if (!sides.has(key)) {
         sides.set(key, {
           key, team: p.team, memberIds: [], state: createRound({ config, questions, now }),
-          docs: new Map(), actions: Promise.resolve(),
+          docs: new Map(), checking: 0, actions: Promise.resolve(),
           hints: new Map(), // questionId -> { outline, lines, linesShown, more }
         });
       }
@@ -675,7 +677,7 @@ export function attachDuel(httpServer, {
     room.roundInfo = { round: room.round, mode: settled.mode, category: settled.category };
     room.status = 'playing';
     const teams = room.sides.filter((s) => s.memberIds.length > 1).map((s) => sideName(room, s));
-    say(room, null, `Round ${room.round}: ${MODE_LABELS[settled.mode]} · ${CATEGORIES[settled.category].label}, ${questions.length} question${questions.length === 1 ? '' : 's'}.${teams.length ? ` Teams: ${teams.join(', ')}.` : ''}`);
+    say(room, null, `Round ${room.round}: ${MODE_LABELS[settled.mode]} · ${CATEGORIES[settled.category].label}, ${questions.length} question${questions.length === 1 ? '' : 's'}${room.config.minutes ? ` in ${room.config.minutes} minutes` : ''}.${teams.length ? ` Teams: ${teams.join(', ')}.` : ''}`);
     return true;
   }
 
@@ -874,7 +876,13 @@ export function attachDuel(httpServer, {
       }
     }
     if (msg.type === 'submitResult') {
-      const checked = await checkSubmit(side.state, action.result, msg.result.code);
+      side.checking += 1; // the clock waits for the check
+      let checked;
+      try {
+        checked = await checkSubmit(side.state, action.result, msg.result.code);
+      } finally {
+        side.checking -= 1;
+      }
       // The room may have moved on while the code ran (a leave, the round ending).
       // Otherwise the submit applies to the side as it is now.
       if (seats.get(token)?.player !== player || !room.sides.includes(side)) return echo('The round ended while your code was being checked.');
@@ -886,7 +894,7 @@ export function attachDuel(httpServer, {
       msg.result.code.length <= MAX_CODE_CHARS) keepCode(player, action.result.questionId, msg.result.code);
     const before = side.state;
     const next = reduceRound(side.state, action);
-    if (next === side.state) return echo('That question was already solved, so this submit did not count.');
+    if (next === side.state) return echo('That question was already solved, or the time was up, so this submit did not count.');
     side.state = next;
     handled();
     if (msg.type === 'submitResult') {
@@ -1357,7 +1365,7 @@ export function attachDuel(httpServer, {
     }));
   });
 
-  /** One clock step for a room: emptiness, players away too long, the countdown. */
+  /** One clock step for a room: emptiness, players away too long, the countdown, the round clock. */
   function tickRoom(room, now) {
     // A room with no human connected is deleted after a while.
     if (humans(room).some((p) => p.socketId)) room.emptySince = null;
@@ -1376,8 +1384,22 @@ export function attachDuel(httpServer, {
         }
       }
     }
-    if (room.status === 'playing' && room.startsAt && now >= room.startsAt) {
+    if (room.status !== 'playing') return;
+    let changed = false;
+    if (room.startsAt && now >= room.startsAt) {
       room.startsAt = null;
+      changed = true;
+    }
+    for (const side of room.sides) {
+      if (side.checking) continue;
+      const next = reduceRound(side.state, { type: 'tick', now });
+      if (next !== side.state) {
+        side.state = next;
+        changed = true;
+      }
+    }
+    if (changed) {
+      updateFinished(room);
       broadcast(room);
     }
   }
@@ -1431,7 +1453,7 @@ export function attachDuel(httpServer, {
 
   const admin = attachAdmin(io, { log, solutions, accounts, accountLinks, ...adminOptions, duel: { rooms: adminRooms, code: adminCode } });
 
-  // The clock: end countdowns, and drop rooms nobody is in.
+  // The clock: end countdowns and rounds whose time is up, and drop rooms nobody is in.
   const timer = setInterval(() => {
     const now = Date.now();
     for (const room of [...rooms.values()]) guard(`room ${room.code}`, () => tickRoom(room, now));

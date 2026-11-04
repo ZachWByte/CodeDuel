@@ -657,6 +657,9 @@ body.chat-side-open .watch-toggle > span:not(.icon) { display: none; }
 @media (max-width: 900px) {
   .lobby-cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto minmax(260px, 1fr); }
   .lobby-chat { grid-column: 1 / -1; border-left: 0; padding-left: 0; border-top: 1px solid var(--g4); padding-top: 14px; }
+  .game-header { gap: 10px; }
+  .game-header .clock-case .face { min-width: 0; padding: 5px 8px 4px; }
+  .game-header .clock-case .numeral { font-size: 22px; }
 }
 @media (max-width: 760px) {
   .lobby { height: auto; }

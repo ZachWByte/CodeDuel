@@ -95,9 +95,13 @@ async function startRound(a, b, pick = raceLists) {
 
 test('settings and picks are validated', () => {
   const off = { blackout: 0, wipe: 0, keyboard: 0, hints: 0 };
-  const full = { ...config, teams: false, partial: false, revealCost: 0, powerups: off };
+  const full = { ...config, minutes: 15, teams: false, partial: false, revealCost: 0, powerups: off };
   assert.deepEqual(validConfig({ ...config, mode: 'x' }), full, 'round options take their defaults');
   assert.deepEqual(validConfig({ ...config, teams: true, partial: true, revealCost: 0.25 }), { ...full, teams: true, partial: true, revealCost: 0.25 });
+  assert.equal(validConfig({ ...config, minutes: 20 }).minutes, 20);
+  assert.equal(validConfig({ ...config, minutes: 0 }).minutes, 0, 'no limit');
+  assert.equal(validConfig({ ...config, minutes: 7 }), null);
+  assert.equal(validConfig({ ...config, minutes: '5' }), null);
   assert.equal(validConfig({ ...config, revealCost: 0.3 }), null);
   assert.equal(validConfig({ ...config, lang: 'toString' }), null);
   assert.equal(validConfig({ ...config, count: 7 }), null);
@@ -130,7 +134,7 @@ test('a round starts when everyone is ready, with the host’s pick for every ro
     assert.equal(ra.roundInfo.category, 'lists');
     const qid = firstQ(ra);
     assert.equal(firstQ(await b.until((r) => r.status === 'playing')), qid, 'same question');
-    assert.equal(me(ra).state.endsAt, undefined, 'no clock for the round');
+    assert.equal(me(ra).state.durationSec, 15 * 60, 'the default round clock');
 
     // Ada checks her tests, then solves (that is every question, so she is done); Bob stops.
     const { visible } = counts(qid);
@@ -156,6 +160,51 @@ test('a round starts when everyone is ready, with the host’s pick for every ro
     const round2 = await a.until((r) => r.status === 'playing' && r.round === 2);
     assert.equal(round2.roundInfo.mode, 'bug-hunt');
     assert.notEqual(round2.roundInfo.category, 'random');
+  } finally {
+    await close();
+  }
+});
+
+test('the host sets the round clock, and the round ends when it runs out', async () => {
+  const { client, close, duel } = await setup();
+  try {
+    const { a, b, code } = await pair(client);
+    assert.equal(a.room.config.minutes, 15, 'the default');
+    assert.match((await b.request('duel:config', { config: { ...config, minutes: 5 } })).error, /Only the host/);
+    assert.ok((await a.request('duel:config', { config: { ...config, minutes: 7 } })).error, 'not a choice');
+    assert.ok((await a.request('duel:config', { config: { ...config, minutes: 20 } })).ok);
+    await b.until((r) => r.config.minutes === 20);
+    const ra = await startRound(a, b);
+    assert.equal(me(ra).state.durationSec, 20 * 60);
+    assert.ok(a.chat.some((m) => /in 20 minutes/.test(m.text)));
+    // A submit still being checked holds the clock, so it is not cut off.
+    const sides = duel.rooms.get(code).sides;
+    for (const side of sides) side.state = { ...side.state, endsAt: Date.now() - 1 };
+    sides[0].checking = 1;
+    sides[1].checking = 1;
+    await new Promise((r) => setTimeout(r, 600));
+    assert.equal(a.room.status, 'playing');
+    sides[0].checking = 0;
+    sides[1].checking = 0;
+    const over = await a.until((r) => r.status === 'finished');
+    assert.equal(me(over).state.endReason, 'time');
+    assert.equal(named(over, 'Bob').state.endReason, 'time');
+  } finally {
+    await close();
+  }
+});
+
+test('with no limit, nothing ends the round on the clock', async () => {
+  const { client, close } = await setup();
+  try {
+    const { a, b } = await pair(client);
+    assert.ok((await a.request('duel:config', { config: { ...config, minutes: 0 } })).ok);
+    await b.until((r) => r.config.minutes === 0);
+    const ra = await startRound(a, b);
+    assert.equal(me(ra).state.endsAt, null);
+    assert.equal(me(ra).state.durationSec, null);
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal(a.room.status, 'playing');
   } finally {
     await close();
   }
@@ -1062,7 +1111,7 @@ test('the host\'s round options reach everyone; reveals only when allowed and on
     assert.ok((await b.request('duel:config', { config: { ...config, partial: true } })).error, 'only the host');
     assert.ok((await a.request('duel:config', { config: { ...config, partial: true, revealCost: 0.25 } })).ok);
     const seen = await b.until((r) => r.config.partial);
-    assert.deepEqual(seen.config, { ...config, teams: false, partial: true, revealCost: 0.25, powerups: { blackout: 0, wipe: 0, keyboard: 0, hints: 0 } });
+    assert.deepEqual(seen.config, { ...config, minutes: 15, teams: false, partial: true, revealCost: 0.25, powerups: { blackout: 0, wipe: 0, keyboard: 0, hints: 0 } });
 
     const room = await startRound(a, b);
     const qid = firstQ(room);

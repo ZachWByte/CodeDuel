@@ -7,7 +7,7 @@ import { COUNTS } from './home.js';
 import { viewButton } from './view-settings.js';
 import { icon, brandMark, clockCase } from './icons.js';
 import { filterQuestions, LANG_LABELS, MODE_LABELS, DIFFICULTY_LABELS, CATEGORIES } from '../questions/index.js';
-import { REVEAL_COSTS, POWERUP_USES } from '../state/round.js';
+import { ROUND_MINUTES, REVEAL_COSTS, POWERUP_USES } from '../state/round.js';
 import { SLOT_LEVELS } from '../questions/pick.js';
 
 export const roomLink = (code) => `${location.origin}/?room=${code}`;
@@ -229,6 +229,8 @@ export function renderLobby(root, { room: initial, chatEl = null, onConfig, onPi
       selectField('Language', Object.entries(LANG_LABELS), c.lang, (lang) => set({ lang }), { ...opts, id: 'set-lang' }),
       selectField('Difficulty', [...Object.entries(DIFFICULTY_LABELS), ['custom', 'Set per question']], c.difficulty, setDifficulty, { ...opts, id: 'set-difficulty' }),
       selectField('Questions', COUNTS.map((n) => [n, String(n)]), c.count, (count) => setCount(Number(count)), { ...opts, id: 'set-count' }),
+      selectField('Round time', ROUND_MINUTES.map((m) => [m, m ? `${m} minutes` : 'No limit']), c.minutes, (minutes) => set({ minutes: Number(minutes) }),
+        { ...opts, id: 'set-minutes', title: 'One clock for the whole round: when it runs out, the round ends. Do the questions in any order.' }),
       selectField('Teams', onOff, String(c.teams), (v) => set({ teams: v === 'true' }), { ...opts, id: 'set-teams' }),
       selectField('Power-ups', onOff, String(powersOn), (v) => setPowersOn(v === 'true'), { ...opts, id: 'set-powers' }),
       selectField('Secret tests', [['false', 'Only a solve scores'], ['true', 'Each one passed scores']], String(c.partial),

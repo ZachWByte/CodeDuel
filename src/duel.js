@@ -27,6 +27,7 @@ function rebase(state, delta) {
   return {
     ...state,
     startedAt: state.startedAt + delta,
+    endsAt: at(state.endsAt),
     endedAt: at(state.endedAt),
     qs: state.qs.map((q) => ({ ...q, solvedAt: at(q.solvedAt), openSince: at(q.openSince) })),
   };
@@ -35,7 +36,8 @@ function rebase(state, delta) {
 /**
  * Same interface as the single-player store. Actions apply locally straight away
  * and go to the server, whose state replaces ours once it has seen them all.
- * Teammates' actions arrive in the server's state.
+ * Ticks stay local: the server runs its own clock. Teammates' actions arrive in the
+ * server's state.
  */
 function createRemoteStore(initial, lastSeq) {
   let state = initial;
@@ -51,7 +53,7 @@ function createRemoteStore(initial, lastSeq) {
   return {
     getState: () => state,
     dispatch(action) {
-      send('duel:action', { type: action.type, result: action.result, seq: ++sent });
+      if (action.type !== 'tick') send('duel:action', { type: action.type, result: action.result, seq: ++sent });
       set(reduceRound(state, action));
     },
     /** Server state, ignored while it has not caught up with our own actions. */

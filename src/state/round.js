@@ -1,20 +1,22 @@
 // A duel round: every question open at once, so a player (or a team, sharing one
-// state) works on them in any order until they have solved them all or finish. There
-// is no round clock: each question has its own, which only runs while someone on the
-// side has that question open, and what a question can score falls with it. Pure like
-// engine.js: the server runs it as the referee and each browser runs it to show its
-// own moves straight away.
+// state) works on them in any order until they have solved them all, finish, or the
+// round clock runs out. Each question also has its own clock, which only runs while
+// someone on the side has that question open, and what a question can score falls
+// with it. Pure like engine.js: the server runs it as the referee and each browser
+// runs it to show its own moves straight away.
 //
-// Room options (config): partial (secret tests passed earn points even when the
-// question is not solved) and revealCost (the share of a question's base points that
-// revealing one failed secret test costs; 0 = off).
+// Room options (config): minutes (the round clock; 0 = no limit), partial (secret
+// tests passed earn points even when the question is not solved) and revealCost (the
+// share of a question's base points that revealing one failed secret test costs;
+// 0 = off).
 //
-// Actions: view, testRun, submitResult, reveal, finish.
+// Actions: tick, view, testRun, submitResult, reveal, finish.
 import { parLines } from '../judge/resolve.js';
 import { BASE_POINTS, PENALTIES, timeLimitFor } from './engine.js';
 
+export const ROUND_MINUTES = [5, 10, 15, 20, 30, 45, 60, 0]; // 0 = no limit
 export const REVEAL_COSTS = [0, 0.1, 0.25, 0.5];
-export const DEFAULT_ROUND = { partial: false, revealCost: 0 };
+export const DEFAULT_ROUND = { minutes: 15, partial: false, revealCost: 0 };
 // Duel power-ups: uses per player per round the host may give (0 = off). See server/duel.js.
 // Blackout and wipe hit every opponent at once, so they come in small numbers.
 export const POWERUP_USES = { blackout: [0, 1, 2, 3], wipe: [0, 1, 2], keyboard: [0, 1, 2, 3], hints: [0, 1, 2, 3, 5] };
@@ -50,7 +52,7 @@ function questionState(meta) {
 }
 
 /**
- * Start a round. config: { lang, mode, difficulty, count, partial, revealCost }
+ * Start a round. config: { lang, mode, difficulty, count, minutes, partial, revealCost }
  * questions: [{ id, mode, difficulty }] (full questions also get a Bug Hunt par).
  */
 export function createRound({ config, questions, now }) {
@@ -63,18 +65,28 @@ export function createRound({ config, questions, now }) {
     par: q.par ?? (q.buggy ? parLines(q, cfg.lang) : null),
     limitSec: timeLimitFor(q),
   }));
+  const durationSec = cfg.minutes > 0 ? cfg.minutes * 60 : null;
   return {
     kind: 'round',
     config: cfg,
     questions: metas,
     qs: metas.map(questionState),
     startedAt: now,
+    endsAt: durationSec === null ? null : now + durationSec * 1000,
+    durationSec,
     viewers: {}, // player id -> the question they have open
     total: 0,
     status: 'playing', // 'playing' | 'finished'
     endedAt: null,
-    endReason: null, // 'solved' | 'finished'
+    endReason: null, // 'time' | 'solved' | 'finished'
   };
+}
+
+/** Seconds left on the round clock (never more than the round, even during the countdown), or null with no limit. */
+export function roundTimeLeftSec(state, now) {
+  if (state.endsAt === null) return null;
+  const at = state.endedAt ?? now;
+  return Math.max(0, Math.min(state.durationSec, (state.endsAt - at) / 1000));
 }
 
 /** Seconds spent on a question so far. */
@@ -133,6 +145,12 @@ const stopClock = (q, now) => (q.openSince === null ? q
 
 function end(state, reason, now) {
   return { ...state, status: 'finished', qs: state.qs.map((q) => stopClock(q, now)), endedAt: now, endReason: reason };
+}
+
+/** Ends the round when the clock runs out. */
+export function tick(state, now) {
+  if (state.status === 'playing' && state.endsAt !== null && now >= state.endsAt) return end(state, 'time', state.endsAt);
+  return state;
 }
 
 /**
@@ -214,8 +232,11 @@ export function finish(state, now) {
   return state.status === 'playing' ? end(state, 'finished', now) : state;
 }
 
-export function reduceRound(state, action) {
+export function reduceRound(prior, action) {
+  // The clock first: an action after the time is up is too late to count.
+  const state = tick(prior, action.now);
   switch (action.type) {
+    case 'tick': return state;
     case 'view': return view(state, action.by, action.questionId, action.now);
     case 'testRun': return testRun(state, action.result, action.now);
     case 'submitResult': return submitResult(state, action.result, action.now);
